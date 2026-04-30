@@ -1,0 +1,100 @@
+# =============================================================================
+# Cortex GraphRAG — Local Stack (Reference)
+# =============================================================================
+# NOTE: The Obsidian plugin generates a personalized docker-compose.cortex.yml
+# with your LOCAL_API_KEY and CONNECTOR_ENCRYPTION_KEY baked in.
+# Use "Save docker-compose.cortex.yml" in plugin settings instead.
+#
+# This file is a reference template for manual setup.
+#
+# Start with:  docker compose -f docker-compose.local.yml up -d
+# Stop with:   docker compose -f docker-compose.local.yml down
+# Wipe data:   docker compose -f docker-compose.local.yml down -v
+#
+# Set GEMINI_API_KEY in your environment for best results:
+#   GEMINI_API_KEY=xxx docker compose -f docker-compose.local.yml up -d
+#
+# Or use Ollama for fully offline operation:
+#   LLM_PROVIDER=ollama EMBEDDING_PROVIDER=ollama \
+#     docker compose -f docker-compose.local.yml up -d
+# =============================================================================
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: cortex-falkordb
+    restart: unless-stopped
+    ports:
+      - "${FALKORDB_PORT:-6379}:6379"
+    volumes:
+      - falkordb_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cortex-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: cortex
+      POSTGRES_PASSWORD: cortex
+      POSTGRES_DB: cortex
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cortex -d cortex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  cortex-api:
+    image: ${CORTEX_IMAGE:-hangarx/cortex-api:latest}
+    container_name: cortex-api
+    restart: unless-stopped
+    ports:
+      - "${CORTEX_PORT:-3400}:3400"
+    environment:
+      PORT: 3400
+      GRAPH_STORE_TYPE: falkordb
+      VECTOR_STORE_TYPE: pgvector
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: 6379
+      DATABASE_URL: postgres://cortex:cortex@postgres:5432/cortex
+      AUTO_MIGRATE: "true"
+      STORAGE_TYPE: postgres
+      ANALYTICS_STORE_TYPE: memory
+
+      # LLM — default to Gemini, fall back to Ollama if no key provided
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-gemini-2.0-flash}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
+
+      # API keys (passed from host environment)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # Ollama (when using LLM_PROVIDER=ollama)
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+
+      MCP_ALLOW_UNAUTHENTICATED: "true"
+      BOOTSTRAP_SECRET: cortex-local
+
+      # IMPORTANT: Set these for production use. The plugin generates them
+      # automatically when you use "Save docker-compose.cortex.yml".
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-default-dev-key-change-in-prod-32}
+    depends_on:
+      falkordb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  falkordb_data:
+  postgres_data:

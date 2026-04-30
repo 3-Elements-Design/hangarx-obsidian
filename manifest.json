@@ -1,0 +1,10 @@
+{
+  "id": "hangarx-obsidian",
+  "name": "HangarX — Agent Memory",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "Make your Obsidian vault available to every AI agent on your machine — Claude Desktop, Claude Code, Cursor — as a structured memory layer with multi-hop reasoning. Your notes become permanent context that survives across tools, sessions, and models.",
+  "author": "HangarX",
+  "authorUrl": "https://hangarx.com",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,21 @@
+{
+  "name": "hangarx-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian plugin for Cortex GraphRAG.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "esbuild src/main.ts --bundle --external:obsidian --external:@codemirror/view --external:@codemirror/state --loader:.md=text --format=cjs --target=es2020 --outfile=main.js --watch",
+    "build": "esbuild src/main.ts --bundle --external:obsidian --external:@codemirror/view --external:@codemirror/state --loader:.md=text --format=cjs --target=es2020 --outfile=main.js --minify",
+    "install:vault": "node scripts/install-vault.mjs",
+    "bump": "node scripts/bump-version.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.21.0",
+    "obsidian": "latest",
+    "typescript": "^5.4.0"
+  }
+}
