@@ -176,6 +176,76 @@ export interface GraphRAGStats {
   [k: string]: unknown;
 }
 
+export interface CommunitySummary {
+  id: string;
+  name?: string;
+  level?: number;
+  summary?: string;
+  keywords?: string[] | string;
+  memberCount?: number;
+  centralEntities?: string[] | string;
+  parentCommunityId?: string | null;
+  modularity?: number;
+  cohesion?: number;
+  separation?: number;
+  density?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  [k: string]: unknown;
+}
+
+export type LlmProvider =
+  | 'openai' | 'anthropic' | 'gemini' | 'grok' | 'moonshot' | 'ollama' | 'openrouter';
+
+export interface LlmRuntimeConfig {
+  chatProvider?: LlmProvider;
+  chatModel?: string;
+  /** Server returns a masked preview ("sk-…abc") rather than the raw key. */
+  chatApiKeyMasked?: string | null;
+  chatBaseUrl?: string | null;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingApiKeyMasked?: string | null;
+  useOwnChatKey?: boolean;
+  useOwnEmbeddingKey?: boolean;
+  [k: string]: unknown;
+}
+
+export interface LlmRuntimeConfigUpdate {
+  chatProvider?: LlmProvider;
+  chatModel?: string;
+  chatApiKey?: string;
+  chatBaseUrl?: string | null;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingApiKey?: string;
+  useOwnChatKey?: boolean;
+  useOwnEmbeddingKey?: boolean;
+}
+
+export interface LlmTestInput {
+  provider: LlmProvider;
+  model: string;
+  apiKey?: string;
+  baseURL?: string;
+}
+
+export interface LlmTestResult {
+  success: boolean;
+  message?: string;
+  latencyMs?: number;
+  [k: string]: unknown;
+}
+
+export interface LlmProviderEntry {
+  id: string;
+  label: string;
+  models: Array<{ id: string; label: string }>;
+  [k: string]: unknown;
+}
+
+export type LlmModelRegistry = LlmProviderEntry[] | Record<string, LlmProviderEntry>;
+
 export class CortexClient {
   constructor(private settings: CortexSettings) {}
 
@@ -209,10 +279,21 @@ export class CortexClient {
 
   /**
    * Upload a single markdown note via the JSON-body upload endpoint.
+   *
+   * `fastMode` raises the LLM context cap and harmonizer concurrency at the
+   * cost of skipping post-ingest VDB indexing + community detection. Use it
+   * for force re-ingest where the user will follow up with a maintenance run
+   * (see ChatPanel "Rebuild communities + reindex" command). Regular sync
+   * should leave it false so retrieval quality stays consistent.
    */
-  async ingestNote(filePath: string, content: string): Promise<IngestResponse> {
+  async ingestNote(
+    filePath: string,
+    content: string,
+    opts: { fastMode?: boolean; syncJobId?: string } = {},
+  ): Promise<IngestResponse> {
     const res = await this.req<{ data: IngestResponse }>('/v1/ingest/files/upload-json', {
       method: 'POST',
+      headers: opts.syncJobId ? { 'x-sync-job-id': opts.syncJobId } : undefined,
       body: JSON.stringify({
         file: {
           originalname: filePath,
@@ -222,7 +303,7 @@ export class CortexClient {
         workspaceId: this.settings.workspaceId,
         vaultId: this.settings.vaultId,
         sourceType: 'md',
-        fastMode: false,
+        fastMode: opts.fastMode === true,
       }),
     });
     return res.data;
@@ -232,9 +313,15 @@ export class CortexClient {
    * Upload a binary attachment (image, PDF, audio, video). The backend
    * decodes contentBase64; mimetype drives the right extraction pipeline.
    */
-  async ingestBinary(filePath: string, mimetype: string, base64: string): Promise<IngestResponse> {
+  async ingestBinary(
+    filePath: string,
+    mimetype: string,
+    base64: string,
+    opts: { syncJobId?: string } = {},
+  ): Promise<IngestResponse> {
     const res = await this.req<{ data: IngestResponse }>('/v1/ingest/files/upload-json', {
       method: 'POST',
+      headers: opts.syncJobId ? { 'x-sync-job-id': opts.syncJobId } : undefined,
       body: JSON.stringify({
         file: {
           originalname: filePath,
@@ -246,6 +333,67 @@ export class CortexClient {
         sourceType: mimetype.split('/')[0] || 'file',
         fastMode: false,
       }),
+    });
+    return res.data;
+  }
+
+  /**
+   * Cancel an in-flight sync job. Sets a server-side flag that ingest workers
+   * check at chunk boundaries — in-flight files bail out at the next safe
+   * point, queued files don't start. Idempotent.
+   */
+  async cancelSyncJob(jobId: string): Promise<void> {
+    if (!jobId) return;
+    await this.req(`/v1/ingest/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+  }
+
+  /**
+   * Run community detection (Louvain by default) and persist results. Used
+   * after a fastMode re-ingest to populate community-level retrieval which
+   * the ingest path skipped. Workspace is taken from settings; the server
+   * falls back to the request user's default if no workspace is set.
+   */
+  async detectCommunities(opts: {
+    algorithm?: 'louvain' | 'leiden';
+    resolution?: number;
+    maxLevels?: number;
+  } = {}): Promise<{ communitiesCreated: number; levels: number; modularity: number }> {
+    const body = {
+      ...opts,
+      ...(this.settings.workspaceId ? { workspaceId: this.settings.workspaceId } : {}),
+    };
+    const res = await this.req<{ data: { communitiesCreated: number; levels: number; modularity: number } }>(
+      '/v1/graph/communities/detect',
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+    return res.data;
+  }
+
+  async listCommunities(opts: {
+    level?: number;
+    minMembers?: number;
+    limit?: number;
+  } = {}): Promise<CommunitySummary[]> {
+    const params = new URLSearchParams();
+    if (this.settings.workspaceId) params.set('workspaceId', this.settings.workspaceId);
+    if (opts.level !== undefined) params.set('level', String(opts.level));
+    if (opts.minMembers !== undefined) params.set('minMembers', String(opts.minMembers));
+    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+    const res = await this.req<{ data: { communities: CommunitySummary[] } }>(
+      `/v1/graph/communities?${params.toString()}`,
+    );
+    return res.data?.communities ?? [];
+  }
+
+  /**
+   * Backfill embeddings on entities that were ingested without them (the
+   * structured-entity VDB indexing that fastMode skips). Idempotent — safe to
+   * run repeatedly; entities that already have embeddings are skipped.
+   */
+  async backfillEntityEmbeddings(): Promise<unknown> {
+    const res = await this.req<{ data: unknown }>('/v1/search/vectors/backfill-entity-embeddings', {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
     return res.data;
   }
@@ -708,6 +856,40 @@ export class CortexClient {
       throw e;
     }
   }
+
+  // ── Runtime LLM config ──────────────────────────────────────────────
+  // The cortex-api stores per-org LLM configuration in Postgres (encrypted)
+  // and reads from there at request time, so swapping providers/models or
+  // updating an API key takes effect immediately — no container restart.
+  // Mounted at /v1/ask/config/* (the inner aiConfigRouter has its own /config
+  // and /test paths, hence the doubled segment).
+
+  async getLlmConfig(): Promise<LlmRuntimeConfig> {
+    const res = await this.req<{ data: LlmRuntimeConfig }>('/v1/ask/config/config');
+    return res.data;
+  }
+
+  async updateLlmConfig(input: LlmRuntimeConfigUpdate): Promise<LlmRuntimeConfig> {
+    const res = await this.req<{ data: LlmRuntimeConfig }>('/v1/ask/config/config', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+    return res.data;
+  }
+
+  async testLlmConfig(input: LlmTestInput): Promise<LlmTestResult> {
+    const res = await this.req<{ success: boolean; data: LlmTestResult }>(
+      '/v1/ask/config/test',
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    return res.data;
+  }
+
+  async getLlmModels(): Promise<LlmModelRegistry> {
+    const res = await this.req<{ data: { providers: LlmModelRegistry } }>('/v1/ask/config/models');
+    return res.data.providers;
+  }
+
 
   /**
    * List Cortex-originated documents that should be projected into this vault.

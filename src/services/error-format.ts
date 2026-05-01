@@ -32,7 +32,7 @@ const PATTERNS: Array<{
 }> = [
   { match: /\b(401|UNAUTHORIZED|AUTH_ERROR|INVALID_API_KEY|invalid bearer)\b/i, kind: 'auth',
     headline: 'Authentication failed',
-    hint: 'Open Settings → HangarX. In Local mode, the plugin\'s API key must match LOCAL_API_KEY in the running container — if you just clicked Regenerate, click Save to vault and rebuild the container with `docker compose -f docker-compose.cortex.yml up -d --force-recreate`.' },
+    hint: 'Open Settings → HangarX. In Cloud mode, sign in again or regenerate your API key in the dashboard. In Local mode, your container is running an older build that still requires a key — re-save the Compose file and rebuild with `docker compose -f docker-compose.cortex.yml up -d --force-recreate`.' },
   { match: /\b403\b|forbidden|WORKSPACE_NOT_ALLOWED/i, kind: 'auth',
     headline: 'Access denied',
     hint: 'Your API key isn\'t scoped to this workspace. Use a key with access, or switch workspaces.' },

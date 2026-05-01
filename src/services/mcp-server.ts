@@ -165,6 +165,16 @@ export class McpServer {
         return;
       }
       const reply = await this.dispatch(request);
+      // JSON-RPC notifications (no `id`) per spec produce no response. The
+      // MCP HTTP transport surfaces that as HTTP 202 Accepted with empty
+      // body — *not* HTTP 200 with body "null", which trips Claude Desktop's
+      // strict response-shape validator and surfaces a wall of invalid_union
+      // errors to the user.
+      if (reply == null) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(reply));
     });

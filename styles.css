@@ -45,6 +45,58 @@
   gap: 12px;
 }
 .cortex-chat-title-text { font-weight: 600; }
+
+/* Mode/status pill in the chat title bar — shows Local vs Cloud and live
+   reachability of the configured apiUrl. Polls every 30s; click to recheck. */
+.cortex-chat-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  margin-right: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  transition: opacity 120ms ease;
+}
+.cortex-chat-mode-pill:hover { opacity: 0.85; }
+.cortex-chat-mode-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cortex-chat-mode-pill.is-checking .cortex-chat-mode-dot {
+  background: var(--text-muted);
+  animation: cortex-pulse 1.4s ease-in-out infinite;
+}
+.cortex-chat-mode-pill.is-connected .cortex-chat-mode-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15);
+}
+.cortex-chat-mode-pill.is-connected {
+  color: var(--text-normal);
+}
+.cortex-chat-mode-pill.is-offline .cortex-chat-mode-dot {
+  background: #ef4444;
+}
+.cortex-chat-mode-pill.is-offline {
+  color: var(--text-error, #ef4444);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+@keyframes cortex-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .cortex-chat-title-actions {
   display: flex;
   align-items: center;
@@ -392,6 +444,68 @@
 }
 .cortex-chat-pill-match {
   margin-left: auto;
+}
+
+/* Low-confidence retrieval diagnostic — shown beneath the answer when the
+   orchestrator's confidence falls below the threshold. Surfaces per-source
+   counts (entities / chunks / communities / analytics / memories) so the
+   user can tell empty-retrieval apart from LLM-refusal, plus a tailored
+   one-click action to fix the most likely cause (rebuild communities or
+   force re-ingest). Designed to be informative without overwhelming. */
+.cortex-chat-retrieval-diag {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--color-orange, #f59e0b);
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 4px;
+  font-size: var(--font-ui-smaller);
+}
+.cortex-chat-retrieval-diag-title {
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-normal);
+}
+.cortex-chat-retrieval-diag-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cortex-chat-retrieval-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-variant-numeric: tabular-nums;
+}
+.cortex-chat-retrieval-pill.is-empty {
+  color: var(--text-faint);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.05);
+}
+.cortex-chat-retrieval-pill-name {
+  text-transform: lowercase;
+}
+.cortex-chat-retrieval-pill-count {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cortex-chat-retrieval-pill.is-empty .cortex-chat-retrieval-pill-count {
+  color: var(--text-faint);
+}
+.cortex-chat-retrieval-diag-hint {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.cortex-chat-retrieval-diag-action {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+}
+.cortex-chat-retrieval-diag-action:hover {
+  color: var(--interactive-accent-hover, var(--interactive-accent));
 }
 
 /* Sections */
@@ -1455,14 +1569,60 @@ details.cortex-provider-row[open] > summary.cortex-provider-row-summary::before 
 }
 .cortex-provider-row-label {
   font-weight: 500;
+}
+/* Push everything after the chip to the right edge — flex-grows the chip's
+   right-margin instead of the label. */
+.cortex-provider-row-label + .cortex-provider-row-active-chip {
+  margin-right: auto;
+}
+/* Fallback when the chip isn't present: label itself flex-grows. */
+.cortex-provider-row-label:not(:has(+ .cortex-provider-row-active-chip)) {
   flex: 1 1 auto;
 }
+/* "active for chat" chip — appears on the keys-section row whose provider
+   matches the current runtime override. Marks the row that's actually
+   producing chat answers right now. */
+.cortex-provider-row-active-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  margin-left: 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--interactive-accent);
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  white-space: nowrap;
+}
+
 .cortex-provider-row-status {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
 .cortex-provider-row-status.is-configured { color: var(--color-green); }
 .cortex-provider-row-status.is-empty { color: var(--text-faint); }
+
+/* Cross-reference line in the LLM (runtime) header pointing back to LLM
+   provider keys. The link is styled like a regular hyperlink to stand out
+   from the surrounding muted description text. */
+.cortex-llm-runtime-xref a {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+}
+.cortex-llm-runtime-xref a:hover {
+  color: var(--interactive-accent-hover, var(--interactive-accent));
+}
+
+/* Disabled provider options in the runtime dropdown — Obsidian's default
+   <option> styling doesn't visually distinguish disabled, so we style it
+   explicitly. The browser still won't let users select them. */
+.cortex-llm-runtime select option:disabled {
+  color: var(--text-faint);
+  font-style: italic;
+}
 .cortex-provider-row-body {
   padding: 0 12px 8px;
 }
@@ -1887,6 +2047,472 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   margin-right: auto;
 }
 
+/* Mode/status pill bar at the top of the modal — same component shape as the
+   chat panel pill, just standalone here so the modal has no shared layout. */
+.cortex-graph-stats-mode-bar {
+  display: flex;
+  align-items: center;
+  margin: -4px 0 12px;
+}
+
+/* Hero stats: hero cards now include an extra "Relationships per entity"
+   ratio card with severity colouring (warn / good) so density is visible
+   at a glance, not just absolute counts. */
+.cortex-graph-stats-card-ratio {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.cortex-graph-stats-card-ratio.is-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.06);
+}
+.cortex-graph-stats-card-ratio.is-good {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.05);
+}
+.cortex-graph-stats-card-hint {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  margin-top: 4px;
+}
+
+/* Insights / heads-up box — surfaces actionable observations like sparse
+   semantic content, dominant wikilink relationships, missing rerankers. */
+.cortex-graph-stats-insights {
+  margin: 14px 0 8px;
+  padding: 12px 14px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-graph-stats-insights h4 {
+  margin: 0 0 8px;
+  font-size: var(--font-ui-medium);
+}
+.cortex-graph-stats-insights ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cortex-graph-stats-insights li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+.cortex-graph-stats-insights li.is-warn {
+  border-left-color: var(--color-orange, #f59e0b);
+  background: rgba(245, 158, 11, 0.05);
+}
+.cortex-graph-stats-insights li.is-info {
+  border-left-color: var(--color-blue, #3b82f6);
+}
+.cortex-graph-stats-insight-icon {
+  font-size: 14px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.cortex-graph-stats-insight-headline {
+  font-weight: 500;
+  font-size: var(--font-ui-small);
+}
+.cortex-graph-stats-insight-detail {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Section headers with type-count caption (e.g. "What's in your graph (7 types)"). */
+.cortex-graph-stats-section {
+  margin: 18px 0 4px;
+}
+.cortex-graph-stats-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.cortex-graph-stats-section-header h4 {
+  margin: 0;
+}
+.cortex-graph-stats-section-caption {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Bar visualization for entity / relationship type distribution. Each row
+   is a flex grid: label, bar track, count + percent. Whole row is clickable
+   when an onClick is provided — drills into the chat panel. */
+.cortex-graph-stats-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cortex-graph-stats-bar-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr minmax(110px, max-content);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: var(--font-ui-small);
+}
+.cortex-graph-stats-bar-row.is-clickable {
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+.cortex-graph-stats-bar-row.is-clickable:hover,
+.cortex-graph-stats-bar-row.is-clickable:focus {
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+.cortex-graph-stats-bar-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cortex-graph-stats-bar-track {
+  position: relative;
+  height: 8px;
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.cortex-graph-stats-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg,
+    var(--interactive-accent, #7c3aed) 0%,
+    rgba(167, 139, 250, 0.7) 100%);
+  border-radius: 4px;
+  transition: width 200ms ease;
+}
+.cortex-graph-stats-bar-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cortex-graph-stats-bar-count {
+  font-weight: 500;
+}
+.cortex-graph-stats-bar-percent {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* "Show N more" expander beneath the top-5 bars. */
+.cortex-graph-stats-more {
+  margin-top: 6px;
+}
+.cortex-graph-stats-more > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 4px 8px;
+  list-style: none;
+}
+.cortex-graph-stats-more > summary::-webkit-details-marker { display: none; }
+.cortex-graph-stats-more > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.cortex-graph-stats-more[open] > summary::before {
+  transform: rotate(90deg);
+}
+.cortex-graph-stats-more > summary:hover {
+  color: var(--text-normal);
+}
+
+/* Technical details disclosure — collapsed by default, holds the engineery
+   parts (sample properties, GraphRAG config, search providers). */
+.cortex-graph-stats-tech {
+  margin-top: 18px;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 14px;
+}
+.cortex-graph-stats-tech > summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-muted);
+  list-style: none;
+  padding: 4px 0;
+}
+.cortex-graph-stats-tech > summary::-webkit-details-marker { display: none; }
+.cortex-graph-stats-tech > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.cortex-graph-stats-tech[open] > summary::before {
+  transform: rotate(90deg);
+}
+.cortex-graph-stats-tech > summary:hover {
+  color: var(--text-normal);
+}
+.cortex-graph-stats-tech h5 {
+  margin: 14px 0 6px;
+  font-size: var(--font-ui-small);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.cortex-graph-stats-tech-sublabel {
+  margin: 10px 0 6px;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+/* Feature flag chips — replaces raw JSON dump of `enableX:true` config. */
+.cortex-graph-stats-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.cortex-graph-stats-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+.cortex-graph-stats-chip.is-on {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: var(--text-normal);
+}
+.cortex-graph-stats-chip.is-off {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+.cortex-graph-stats-chip-mark {
+  font-size: 10px;
+}
+
+/* Stack health panel — surfaces per-service status from the API's /health
+   endpoint plus copy-able recovery commands. Sits between the connection
+   status pill and the setup wizard. */
+.cortex-stack-health-wrap {
+  margin: 8px 0 12px;
+}
+.cortex-stack-health {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  overflow: hidden;
+}
+.cortex-stack-health > summary,
+.cortex-stack-health-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 500;
+  font-size: var(--font-ui-small);
+}
+.cortex-stack-health > summary::-webkit-details-marker { display: none; }
+.cortex-stack-health > summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+.cortex-stack-health[open] > summary::before { transform: rotate(90deg); }
+.cortex-stack-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cortex-stack-health-dot.is-ok {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15);
+}
+.cortex-stack-health-dot.is-degraded {
+  background: var(--color-orange, #f59e0b);
+}
+.cortex-stack-health-dot.is-offline {
+  background: #ef4444;
+}
+.cortex-stack-health-version {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.cortex-stack-health-body {
+  padding: 8px 14px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cortex-stack-health-services {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.cortex-stack-health-service {
+  display: grid;
+  grid-template-columns: 18px 180px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: var(--font-ui-small);
+}
+.cortex-stack-health-service-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.cortex-stack-health-service-icon.is-ok {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+}
+.cortex-stack-health-service-icon.is-down {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+.cortex-stack-health-service-icon.is-skip {
+  color: var(--text-faint);
+}
+.cortex-stack-health-service-icon.is-unknown {
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+}
+.cortex-stack-health-service-name {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+.cortex-stack-health-service-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Recovery command rows — labeled, copy-able. Primary command is highlighted;
+   destructive commands carry a red border. */
+.cortex-stack-health-recovery {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 10px;
+}
+.cortex-stack-health-recovery-headline {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  margin-bottom: 6px;
+}
+.cortex-stack-health-recovery-more {
+  margin-top: 10px;
+}
+.cortex-stack-health-recovery-more > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 4px 0;
+}
+.cortex-stack-health-recovery-more > summary::-webkit-details-marker { display: none; }
+.cortex-stack-health-recovery-more > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.cortex-stack-health-recovery-more[open] > summary::before {
+  transform: rotate(90deg);
+}
+.cortex-stack-health-cmd {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-stack-health-cmd.is-primary {
+  border-color: rgba(124, 58, 237, 0.4);
+  background: rgba(167, 139, 250, 0.04);
+}
+.cortex-stack-health-cmd.is-destructive {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.04);
+}
+.cortex-stack-health-cmd-label {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.cortex-stack-health-cmd.is-destructive .cortex-stack-health-cmd-label {
+  color: var(--text-error, #ef4444);
+}
+.cortex-stack-health-cmd-codewrap {
+  position: relative;
+}
+.cortex-stack-health-cmd-codewrap pre {
+  margin: 0;
+  padding: 8px 64px 8px 10px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cortex-stack-health-cmd-codewrap pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.cortex-stack-health-cmd-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 10px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-secondary-alt, var(--background-secondary));
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  height: auto;
+}
+.cortex-stack-health-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cortex-stack-health-yml-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
 /* Progress-bar notice (long-running sync / force-resync). */
 .cortex-progress-notice {
   display: flex;
@@ -2093,3 +2719,675 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   font-size: 0.9em;
 }
 .cortex-readme-body pre code { padding: 0; background: transparent; }
+
+/* Chat as a side-pane ItemView. The shared ChatPanel renders the same DOM
+ * as the modal (.cortex-chat-output, .cortex-chat-composer, …) but the
+ * outer container is a workspace leaf, not a modal. These rules pull the
+ * padding tighter and stretch the layout to fill the leaf. */
+.cortex-chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+.cortex-chat-view-title {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+}
+.cortex-chat-view-title .cortex-chat-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cortex-chat-view-title .cortex-chat-title-actions {
+  display: flex;
+  gap: 2px;
+}
+.cortex-chat-view-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+.cortex-chat-view-body .cortex-chat-output {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px;
+}
+.cortex-chat-view-body .cortex-chat-composer-wrap {
+  flex: 0 0 auto;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+/* Empty-state suggestions stack vertically in narrow side panel. */
+.cortex-chat-view-body .cortex-chat-suggestions {
+  grid-template-columns: 1fr;
+}
+/* History popover positions against the view root (parentEl), not the modal. */
+.cortex-chat-view .cortex-chat-history-popover {
+  top: 44px;
+  right: 8px;
+  left: 8px;
+  width: auto;
+}
+
+/* Empty-state footer — quiet line that pitches cross-tool memory. */
+.cortex-chat-empty-footer {
+  margin-top: 18px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.45;
+}
+
+/* ──────────────────────────────────────────
+   Cloud graph pull modal
+   ────────────────────────────────────────── */
+.modal.cortex-pull-modal,
+.cortex-pull-modal {
+  width: min(480px, 90vw) !important;
+  max-width: min(480px, 90vw) !important;
+}
+.cortex-pull-modal .modal-content {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Phase row */
+.cortex-pull-phase-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cortex-pull-phase-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  flex-shrink: 0;
+}
+.cortex-pull-phase-icon .svg-icon { width: 18px; height: 18px; }
+.cortex-pull-phase-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+/* Message */
+.cortex-pull-message {
+  font-size: 13px;
+  color: var(--text-muted);
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Progress bar */
+.cortex-pull-bar-wrap {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.cortex-pull-bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--interactive-accent);
+  transition: width 300ms ease;
+}
+.cortex-pull-bar-fill.cortex-pull-bar-done {
+  background: var(--color-green, #34d058);
+}
+.cortex-pull-bar-fill.cortex-pull-bar-error {
+  background: var(--text-error, #e53e3e);
+}
+.cortex-pull-bar-fill.cortex-pull-bar-indeterminate {
+  width: 40% !important;
+  animation: cortex-pull-slide 1.4s ease-in-out infinite;
+}
+@keyframes cortex-pull-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Stats grid */
+.cortex-pull-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cortex-pull-stat-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.cortex-pull-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.cortex-pull-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: 13px;
+  color: var(--text-normal);
+}
+.cortex-pull-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.cortex-pull-stat-icon .svg-icon { width: 14px; height: 14px; }
+.cortex-pull-stat-create .cortex-pull-stat-icon { color: var(--color-green, #34d058); }
+.cortex-pull-stat-update .cortex-pull-stat-icon { color: var(--interactive-accent); }
+.cortex-pull-stat-delete .cortex-pull-stat-icon { color: var(--text-error, #e53e3e); }
+.cortex-pull-stat-enriched .cortex-pull-stat-icon { color: var(--color-yellow, #f0ad4e); }
+.cortex-pull-stat-total .cortex-pull-stat-icon { color: var(--text-muted); }
+
+/* Stat details (preview expandable lists) */
+.cortex-pull-stat-details {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.cortex-pull-stat-details > summary {
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-normal);
+}
+.cortex-pull-stat-details ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+.cortex-pull-stat-details li { margin: 2px 0; }
+.cortex-pull-more { font-style: italic; color: var(--text-faint); }
+
+.cortex-pull-errors > summary { color: var(--text-error); }
+
+/* Button row */
+.cortex-pull-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.cortex-pull-cancel {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+.cortex-pull-cancel:hover { background: var(--background-modifier-hover); }
+
+.cortex-pull-error-msg {
+  color: var(--text-error);
+  background: var(--background-modifier-error);
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+/* ──────────────────────────────────────────
+   Sync modal — picker, stat tiles, action cards
+   ────────────────────────────────────────── */
+.modal.cortex-sync-modal,
+.cortex-sync-modal {
+  width: min(560px, 92vw) !important;
+  max-width: min(560px, 92vw) !important;
+}
+.cortex-sync-modal .modal-content {
+  padding: 16px 20px 20px;
+}
+.cortex-sync-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cortex-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  align-self: flex-start;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cortex-sync-badge-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.cortex-sync-badge-dot.is-cloud { background: var(--interactive-accent); }
+.cortex-sync-badge-dot.is-local { background: var(--color-green, #34d058); }
+
+.cortex-sync-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.cortex-sync-stat {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-sync-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--background-modifier-form-field);
+  color: var(--text-muted);
+}
+.cortex-sync-stat-icon .svg-icon { width: 16px; height: 16px; }
+.cortex-sync-stat-body { min-width: 0; }
+.cortex-sync-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+.cortex-sync-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.cortex-sync-stat-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.cortex-sync-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cortex-sync-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  cursor: pointer;
+  transition: background 80ms ease, border-color 80ms ease, transform 80ms ease;
+}
+.cortex-sync-action:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+.cortex-sync-action:active { transform: scale(0.99); }
+.cortex-sync-action:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.cortex-sync-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.cortex-sync-action-icon .svg-icon { width: 18px; height: 18px; }
+.cortex-sync-action-body { flex: 1 1 auto; min-width: 0; }
+.cortex-sync-action-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cortex-sync-action-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.cortex-sync-action-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.cortex-sync-action-chevron .svg-icon { width: 18px; height: 18px; }
+
+.cortex-sync-footer {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 4px;
+}
+.cortex-sync-footer a {
+  color: var(--interactive-accent);
+  text-decoration: none;
+}
+.cortex-sync-footer a:hover { text-decoration: underline; }
+
+/* Sync modal — mismatch banner (vault populated, graph empty). */
+.cortex-sync-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-yellow, #f0ad4e) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-yellow, #f0ad4e) 40%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-normal);
+}
+.cortex-sync-banner.is-hidden { display: none; }
+.cortex-sync-banner-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-yellow, #f0ad4e);
+  margin-top: 1px;
+}
+.cortex-sync-banner-icon .svg-icon { width: 16px; height: 16px; }
+
+/* Danger-tinted action card — Force re-ingest. Subtler than red so it
+ * doesn't feel like a destructive button by default; it brightens up
+ * when the mismatch banner is showing the user this is the right call. */
+.cortex-sync-action.cortex-sync-action-danger .cortex-sync-action-icon {
+  background: var(--background-modifier-form-field);
+  color: var(--color-yellow, #f0ad4e);
+}
+.cortex-sync-action.cortex-sync-action-danger:hover {
+  border-color: var(--color-yellow, #f0ad4e);
+}
+
+/* Sync modal — back bar shown above progress / receipt screens. */
+.cortex-sync-backbar {
+  margin: -4px 0 6px;
+}
+.cortex-sync-backbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+.cortex-sync-backbtn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cortex-sync-backbtn-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.cortex-sync-backbtn-icon .svg-icon { width: 14px; height: 14px; }
+
+/* Runtime LLM picker — subtle status pill + side-by-side action buttons. */
+.cortex-llm-runtime {
+  margin-top: 4px;
+}
+.cortex-llm-runtime-status {
+  margin: 4px 0 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.cortex-llm-runtime-status.is-ok {
+  border-color: color-mix(in srgb, var(--color-green, #34d058) 50%, transparent);
+  color: var(--text-normal);
+}
+.cortex-llm-runtime-status.is-err {
+  border-color: color-mix(in srgb, var(--text-error, #e53e3e) 50%, transparent);
+  color: var(--text-error, #e53e3e);
+}
+.cortex-llm-runtime-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.cortex-llm-runtime-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Graph pull — summary mode breakdown table. */
+.cortex-pull-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.cortex-pull-summary-table th,
+.cortex-pull-summary-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  text-align: left;
+}
+.cortex-pull-summary-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.cortex-pull-summary-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-monospace);
+}
+.cortex-pull-summary-num.is-new {
+  color: var(--color-green, #34d058);
+}
+
+/* "Showing N entities from chat" pill that overlays Obsidian's graph view
+ * when the user clicks "Show on graph" in a chat answer. Sits in the
+ * top-right so it doesn't overlap Obsidian's own controls. */
+.cortex-graph-filter-pill {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 12px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-normal);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+.cortex-graph-filter-pill-clear {
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.cortex-graph-filter-pill-clear:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.cortex-graph-filter-pill-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: help;
+}
+
+/* Memory Stats — Communities panel. Populated by /v1/graph/communities;
+ * "Detect now" button kicks off Louvain on demand. */
+.cortex-graph-stats-communities {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cortex-graph-stats-communities-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cortex-graph-stats-communities-header h4 {
+  margin: 0;
+}
+.cortex-graph-stats-detect-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: 0;
+  cursor: pointer;
+}
+.cortex-graph-stats-detect-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+.cortex-graph-stats-detect-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+.cortex-graph-stats-communities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.cortex-graph-stats-community-row {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+.cortex-graph-stats-community-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.cortex-graph-stats-community-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cortex-graph-stats-community-summary {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-normal);
+}
+.cortex-graph-stats-community-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.cortex-graph-stats-community-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--background-modifier-form-field);
+  color: var(--text-muted);
+}
+.cortex-graph-stats-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.cortex-graph-stats-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cortex-graph-stats-error {
+  font-size: 12px;
+  color: var(--text-error, #e53e3e);
+}
+
+/* Stack-health "Show recent logs" output. Pre is scrollable, capped height. */
+.cortex-stack-health-logs {
+  margin-top: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cortex-stack-health-logs-header {
+  padding: 8px 12px;
+  background: var(--background-secondary);
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cortex-stack-health-logs-pre {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--background-primary);
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  white-space: pre;
+}
+.cortex-stack-health-logs-pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}

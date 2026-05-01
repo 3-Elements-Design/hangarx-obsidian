@@ -108,16 +108,65 @@ export class VaultSync {
     await this.saveIndex();
   }
 
+  /**
+   * Cheap (in-memory) walk over the vault + index that returns counts of
+   * files changed/added/deleted since the last sync. Drives the SyncModal
+   * picker stat row — *no* file content is hashed; we use Obsidian's
+   * mtime/size to spot likely changes. Exact result requires a full sync.
+   */
+  async getChangesSinceLastSync(): Promise<{
+    changed: number;
+    added: number;
+    deleted: number;
+    total: number;
+    lastSyncedAt: number | null;
+  }> {
+    await this.loadIndex();
+    const all = this.app.vault.getMarkdownFiles();
+    const eligible = all.filter(f => !this.isExcluded(f.path));
+
+    const known = this.index.files;
+    const seen = new Set<string>();
+
+    let changed = 0;
+    let added = 0;
+    let lastSyncedAt: number | null = null;
+
+    for (const f of eligible) {
+      seen.add(f.path);
+      const state = known[f.path];
+      if (!state) {
+        added++;
+        continue;
+      }
+      // mtime is the cheapest fingerprint that catches edits without
+      // re-hashing every file. False positives are fine — they just mean
+      // the actual sync re-hashes and no-ops on identical content.
+      if (f.stat.mtime > state.hashedAt) {
+        changed++;
+      }
+      if (state.hashedAt && (!lastSyncedAt || state.hashedAt > lastSyncedAt)) {
+        lastSyncedAt = state.hashedAt;
+      }
+    }
+
+    let deleted = 0;
+    for (const path of Object.keys(known)) {
+      if (!seen.has(path)) deleted++;
+    }
+
+    return { changed, added, deleted, total: eligible.length, lastSyncedAt };
+  }
+
   // ---------- Path filtering ------------------------------------------
 
   private isExcluded(path: string): boolean {
     // Always exclude folders Cortex writes to itself, to prevent feedback
-    // loops. (graphPullFolder etc. removed in the Apr 2026 simplification —
-    // those features are gone, but keep the chat-export + memory output
-    // folders excluded.)
+    // loops: chat exports, memory snapshots, and pulled graph entities.
     const cortexOutputFolders = [
       this.settings.chatExportFolder,
       this.settings.memoryFolder,
+      this.settings.graphPullFolder,
     ].filter((f): f is string => !!f && f.length > 0);
     if (cortexOutputFolders.some(f => path.startsWith(f))) return true;
 
@@ -147,7 +196,12 @@ export class VaultSync {
   async fullSync(opts?: {
     onProgress?: (p: { phase: 'sync' | 'delete'; done: number; total: number; currentPath?: string }) => void;
     signal?: AbortSignal;
-  }): Promise<{ synced: number; skipped: number; deleted: number; failed?: number; failedPaths?: string[]; paused?: string }> {
+    /** Pass true for force-reingest to use the server's fastMode path (bigger
+     *  LLM window, parallel harmonizer batches, skips post-ingest VDB indexing
+     *  and community detection). The caller is responsible for triggering the
+     *  cleanup pass afterwards via the "Rebuild communities + reindex" command. */
+    fastMode?: boolean;
+  }): Promise<{ synced: number; skipped: number; deleted: number; failed?: number; failedPaths?: string[]; paused?: string; syncJobId?: string }> {
     await this.loadIndex();
 
     const all = this.app.vault.getMarkdownFiles();
@@ -155,6 +209,20 @@ export class VaultSync {
     const total = files.length;
     const onProgress = opts?.onProgress;
     const signal = opts?.signal;
+
+    // Per-session cancellation token. Sent on every ingest call as
+    // x-sync-job-id; the abort handler below POSTs to /v1/ingest/jobs/<id>
+    // /cancel so in-flight server work bails out at the next chunk boundary
+    // instead of running to completion after the user clicks Cancel.
+    const syncJobId = crypto.randomUUID();
+    if (signal && !signal.aborted) {
+      const onAbort = (): void => {
+        this.client.cancelSyncJob(syncJobId).catch(e =>
+          console.warn('[Cortex] cancelSyncJob failed (non-fatal):', e),
+        );
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     let synced = 0, skipped = 0, deleted = 0;
     let failed = 0;
@@ -183,7 +251,10 @@ export class VaultSync {
         const file = files[idx];
         seenPaths.add(file.path);
         try {
-          const result = await this.syncFile(file, /* persistImmediately */ false);
+          const result = await this.syncFile(file, /* persistImmediately */ false, {
+            fastMode: opts?.fastMode === true,
+            syncJobId,
+          });
           if (result === 'synced') synced++;
           else if (result === 'unchanged') skipped++;
         } catch (e) {
@@ -205,7 +276,7 @@ export class VaultSync {
     if (signal?.aborted) {
       this.index.lastFullSyncAt = Date.now();
       await this.saveIndex();
-      return { synced, skipped, deleted: 0, failed, failedPaths, paused: 'cancelled' };
+      return { synced, skipped, deleted: 0, failed, failedPaths, paused: 'cancelled', syncJobId };
     }
 
     // Detect deletions: anything we know about that's no longer in the vault
@@ -249,7 +320,7 @@ export class VaultSync {
 
     this.index.lastFullSyncAt = Date.now();
     await this.saveIndex();
-    return { synced, skipped, deleted, failed, failedPaths };
+    return { synced, skipped, deleted, failed, failedPaths, syncJobId };
   }
 
   // ---------- Single-file sync ----------------------------------------
@@ -279,7 +350,11 @@ export class VaultSync {
    * Returns 'synced' | 'unchanged' | 'skipped'. If `persistImmediately` is
    * false, the caller is responsible for calling saveIndex().
    */
-  private async syncFile(file: TFile, persistImmediately = true): Promise<'synced' | 'unchanged' | 'skipped'> {
+  private async syncFile(
+    file: TFile,
+    persistImmediately = true,
+    opts: { fastMode?: boolean; syncJobId?: string } = {},
+  ): Promise<'synced' | 'unchanged' | 'skipped'> {
     await this.loadIndex();
 
     const content = await this.app.vault.cachedRead(file);
@@ -293,7 +368,10 @@ export class VaultSync {
     if (prior && prior.hash === hash) return 'unchanged';
 
     try {
-      await this.client.ingestNote(file.path, content);
+      await this.client.ingestNote(file.path, content, {
+        fastMode: opts.fastMode === true,
+        syncJobId: opts.syncJobId,
+      });
     } catch (e) {
       throw e;
     }
@@ -312,7 +390,7 @@ export class VaultSync {
     // Best-effort attachment sync alongside the note
     if (this.settings.syncAttachments) {
       try {
-        await this.syncAttachmentsFor(file, content);
+        await this.syncAttachmentsFor(file, content, opts.syncJobId);
       } catch (e) {
         console.warn('[Cortex] attachment sync failed', e);
       }
@@ -353,7 +431,7 @@ export class VaultSync {
 
   // ---------- Attachments ---------------------------------------------
 
-  private async syncAttachmentsFor(noteFile: TFile, content: string): Promise<void> {
+  private async syncAttachmentsFor(noteFile: TFile, content: string, syncJobId?: string): Promise<void> {
     const refs = extractAttachmentRefs(content);
     if (refs.length === 0) return;
 
@@ -382,7 +460,7 @@ export class VaultSync {
       const base64 = arrayBufferToBase64(bytes);
       if (base64.length === 0) continue;
       try {
-        await this.client.ingestBinary(target.path, mime, base64);
+        await this.client.ingestBinary(target.path, mime, base64, { syncJobId });
         this.index.attachments[target.path] = Date.now();
         this.index.files[target.path] = {
           hash,
