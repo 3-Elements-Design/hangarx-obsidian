@@ -201,7 +201,12 @@
 .cortex-chat-history-del:hover { color: var(--text-error); background: var(--background-modifier-hover); }
 .cortex-chat-history-del .svg-icon { width: 13px; height: 13px; }
 
-/* Output (scroll) area */
+/* Output (scroll) area. Force text selection back on — Obsidian's
+   workspace-leaf-content sets `user-select: none` on side-panel views to
+   prevent accidental drag-to-select while resizing. That cascade reaches
+   into our chat bubbles and silently blocks copy. We re-enable it here
+   and on the bubble itself; the suggestion-card buttons keep their own
+   `user-select: none` (defined below) so cards stay click-not-drag. */
 .cortex-chat-output {
   flex: 1;
   overflow-y: auto;
@@ -209,6 +214,13 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cortex-chat-output .cortex-chat-bubble,
+.cortex-chat-output .cortex-chat-bubble * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* ──────────────────────────────────────────
