@@ -1,5 +1,5 @@
 /**
- * Public plugin API exposed at `app.plugins.plugins['hangarx-obsidian'].api`.
+ * Public plugin API exposed at `app.plugins.plugins['hangarx'].api`.
  *
  * Stable surface for Templater snippets, Dataview JS queries, and other plugins.
  * Methods return plain JSON-friendly values (no DOM, no Obsidian types) so they
@@ -7,13 +7,13 @@
  *
  * Usage in a Dataview JS block:
  *
- *   const cortex = app.plugins.plugins['hangarx-obsidian'].api;
+ *   const cortex = app.plugins.plugins['hangarx'].api;
  *   const related = await cortex.related(dv.current().file.name, 5);
  *   dv.list(related.map(r => `[[${r.noteName}]] (${r.score.toFixed(2)})`));
  *
  * Usage in a Templater template:
  *
- *   <% const cortex = app.plugins.plugins['hangarx-obsidian'].api; %>
+ *   <% const cortex = app.plugins.plugins['hangarx'].api; %>
  *   <% const answer = await cortex.ask("Summarize my notes from this week"); %>
  *   <%- answer %>
  */

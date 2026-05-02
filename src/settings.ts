@@ -1775,7 +1775,7 @@ export class CortexSettingTab extends PluginSettingTab {
       const bridgePath = this.plugin.mcp.bridgePath || `<reload-plugin-to-generate>`;
       const snippet =
 `"mcpServers": {
-  "hangarx-obsidian": {
+  "hangarx": {
     "command": "node",
     "args": ["${bridgePath}"],
     "env": {
@@ -1972,7 +1972,7 @@ export class CortexSettingTab extends PluginSettingTab {
       .setIcon('code')
       .onClick(async () => {
         const snippet = JSON.stringify(
-          { mcpServers: { 'hangarx-obsidian': buildBridgeEntry(bridge) } },
+          { mcpServers: { 'hangarx': buildBridgeEntry(bridge) } },
           null,
           2,
         );
@@ -2024,7 +2024,7 @@ export class CortexSettingTab extends PluginSettingTab {
     });
 
     const body = row.createDiv({ cls: 'cortex-agent-row-body' });
-    const entry = { mcpServers: { 'hangarx-obsidian': buildBridgeEntry(bridge) } };
+    const entry = { mcpServers: { 'hangarx': buildBridgeEntry(bridge) } };
     const snippet = JSON.stringify(entry, null, 2);
 
     const codeWrap = body.createDiv({ cls: 'cortex-mcp-code-wrap' });

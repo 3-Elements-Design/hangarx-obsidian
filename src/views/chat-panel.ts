@@ -605,7 +605,7 @@ export class ChatPanel {
         // Trigger the same Cmd-P command via the public command API.
         (this.app as unknown as {
           commands: { executeCommandById(id: string): boolean };
-        }).commands.executeCommandById('hangarx-obsidian:cortex-1c-rebuild-graph');
+        }).commands.executeCommandById('hangarx:cortex-1c-rebuild-graph');
       });
     } else if ((retrieval.entities ?? 0) === 0 && (retrieval.chunks ?? 0) === 0) {
       hint.createEl('span', {
@@ -620,7 +620,7 @@ export class ChatPanel {
         evt.preventDefault();
         (this.app as unknown as {
           commands: { executeCommandById(id: string): boolean };
-        }).commands.executeCommandById('hangarx-obsidian:cortex-1b-resync-all');
+        }).commands.executeCommandById('hangarx:cortex-1b-resync-all');
       });
       hint.appendText('.');
     } else {

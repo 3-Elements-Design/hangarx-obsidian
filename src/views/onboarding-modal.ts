@@ -172,7 +172,7 @@ export class OnboardingModal extends Modal {
       actionIcon: 'plug',
       action: () => {
         (this.app as any).setting?.open?.();
-        (this.app as any).setting?.openTabById?.('hangarx-obsidian');
+        (this.app as any).setting?.openTabById?.('hangarx');
       },
     });
 

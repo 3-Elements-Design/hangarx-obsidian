@@ -164,10 +164,16 @@ async function upsertMcpEntry(
   if (!existing.mcpServers || typeof existing.mcpServers !== 'object') {
     existing.mcpServers = {};
   }
-  const prev = existing.mcpServers['hangarx-obsidian'];
+  // Migrate legacy 'hangarx-obsidian' key (used in plugin versions ≤0.0.9)
+  // to the canonical 'hangarx' id required by Obsidian's plugin store
+  // (which forbids `obsidian` in plugin ids).
+  if (existing.mcpServers['hangarx-obsidian']) {
+    delete existing.mcpServers['hangarx-obsidian'];
+  }
+  const prev = existing.mcpServers['hangarx'];
   const updated = !!prev;
   const unchanged = prev && JSON.stringify(prev) === JSON.stringify(entry);
-  existing.mcpServers['hangarx-obsidian'] = entry;
+  existing.mcpServers['hangarx'] = entry;
 
   // Ensure parent directory exists
   try {
@@ -268,9 +274,15 @@ export async function disconnectMcpEntry(configPath: string): Promise<ConnectRes
   } catch (e: any) {
     return { ok: false, configPath, message: `Config file isn't valid JSON: ${e.message}` };
   }
-  if (!parsed?.mcpServers || !parsed.mcpServers['hangarx-obsidian']) {
+  // Disconnect both the canonical 'hangarx' key and the legacy
+  // 'hangarx-obsidian' key (used in plugin versions ≤0.0.9), so users
+  // upgrading from an older install end up with a clean config.
+  const hadCanonical = !!parsed?.mcpServers?.['hangarx'];
+  const hadLegacy = !!parsed?.mcpServers?.['hangarx-obsidian'];
+  if (!parsed?.mcpServers || (!hadCanonical && !hadLegacy)) {
     return { ok: true, configPath, message: 'Already disconnected.', unchanged: true };
   }
+  delete parsed.mcpServers['hangarx'];
   delete parsed.mcpServers['hangarx-obsidian'];
   try {
     await fs.writeFile(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
@@ -309,7 +321,9 @@ export async function checkConnection(configPath: string | null): Promise<{
     const raw = await fs.readFile(configPath, 'utf8');
     if (!raw.trim()) return { exists: true, connected: false };
     const parsed = JSON.parse(raw);
-    const entry = parsed?.mcpServers?.['hangarx-obsidian'];
+    // Recognize both the canonical id and the legacy one so existing
+    // installs from plugin v≤0.0.9 still report as connected.
+    const entry = parsed?.mcpServers?.['hangarx'] ?? parsed?.mcpServers?.['hangarx-obsidian'];
     return { exists: true, connected: !!entry };
   } catch (e: any) {
     if (e?.code === 'ENOENT') return { exists: false, connected: false };

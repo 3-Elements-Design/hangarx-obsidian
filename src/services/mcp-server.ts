@@ -199,7 +199,7 @@ export class McpServer {
             id,
             result: {
               protocolVersion: '2024-11-05',
-              serverInfo: { name: 'hangarx-obsidian', version: '0.1.0' },
+              serverInfo: { name: 'hangarx', version: '0.1.0' },
               capabilities: { tools: {} },
             },
           };
