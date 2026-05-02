@@ -1,7 +1,7 @@
 {
   "id": "hangarx-obsidian",
   "name": "HangarX",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "minAppVersion": "1.5.0",
   "description": "Turn your Obsidian vault into a knowledge graph that every AI agent on your machine can query — Claude Desktop, Claude Code, Cursor, Cline, Windsurf. Multi-hop reasoning, citations, and persistent context across tools, sessions, and models.",
   "author": "HangarX",
