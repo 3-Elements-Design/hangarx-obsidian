@@ -630,7 +630,9 @@
   overflow: hidden;
 }
 
-/* Follow-ups */
+/* Follow-ups — chips wrap their text rather than clip horizontally so
+ * long suggestions stay readable in the narrow side panel. Native button
+ * elements default to `white-space: nowrap`; explicit override required. */
 .cortex-chat-followup-list { display: flex; flex-direction: column; gap: 4px; }
 .cortex-chat-followup {
   text-align: left;
@@ -642,6 +644,15 @@
   color: var(--text-normal);
   cursor: pointer;
   transition: background 80ms ease;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  min-height: 28px;
+  height: auto;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .cortex-chat-followup:hover { background: var(--background-modifier-hover); }
 
@@ -3406,4 +3417,283 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   background: transparent;
   padding: 0;
   font-size: inherit;
+}
+
+/* Vault ↔ Graph diff modal — four-bucket reconciliation view. */
+.modal.cortex-diff-modal,
+.cortex-diff-modal {
+  width: min(720px, 92vw) !important;
+  max-width: min(720px, 92vw) !important;
+}
+.cortex-diff-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cortex-diff-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+.cortex-diff-error {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-error, #e53e3e);
+  font-size: 13px;
+}
+
+.cortex-diff-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.cortex-diff-tile {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-diff-tile-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+.cortex-diff-tile-label {
+  font-size: 12px;
+  color: var(--text-normal);
+  margin-top: 2px;
+}
+.cortex-diff-tile-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.cortex-diff-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cortex-diff-bucket {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+.cortex-diff-bucket > summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cortex-diff-bucket-warning {
+  border-color: color-mix(in srgb, var(--color-yellow, #f0ad4e) 40%, transparent);
+}
+.cortex-diff-bucket-warning > summary {
+  color: var(--color-yellow, #f0ad4e);
+}
+.cortex-diff-bucket-info > summary {
+  color: var(--text-muted);
+}
+.cortex-diff-bucket-ok > summary {
+  color: var(--color-green, #34d058);
+}
+.cortex-diff-bucket-body {
+  padding: 4px 12px 12px;
+}
+.cortex-diff-bucket-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 8px;
+  line-height: 1.45;
+}
+.cortex-diff-bucket-actions {
+  margin-bottom: 8px;
+}
+.cortex-diff-bucket-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cortex-diff-bucket-action-icon { display: inline-flex; align-items: center; }
+.cortex-diff-bucket-action-icon .svg-icon { width: 14px; height: 14px; }
+
+.cortex-diff-bucket-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--background-primary);
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-diff-bucket-row {
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.cortex-diff-bucket-row a {
+  color: var(--interactive-accent);
+  text-decoration: none;
+}
+.cortex-diff-bucket-row a:hover { text-decoration: underline; }
+.cortex-diff-row-unlinked {
+  color: var(--text-muted);
+  cursor: default;
+}
+.cortex-diff-bucket-more {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 4px;
+}
+
+.cortex-diff-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.cortex-diff-footer button {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Onboarding checklist — replaces the prompt cards in the empty state
+ * until the user has connected, synced once, and asked one question.
+ * Auto-disappears once those three gates are passed. */
+.cortex-onboarding {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cortex-onboarding-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.cortex-onboarding-progress {
+  position: relative;
+  height: 4px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: visible;
+  margin-bottom: 4px;
+}
+.cortex-onboarding-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+  transition: width 200ms ease;
+}
+.cortex-onboarding-progress-label {
+  position: absolute;
+  right: 0;
+  top: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cortex-onboarding-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  margin-top: 8px;
+}
+.cortex-onboarding-step.is-done {
+  border-color: color-mix(in srgb, var(--color-green, #34d058) 40%, transparent);
+  background: color-mix(in srgb, var(--color-green, #34d058) 6%, var(--background-secondary));
+}
+.cortex-onboarding-step.is-disabled {
+  opacity: 0.55;
+}
+.cortex-onboarding-step-status {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--background-modifier-form-field);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cortex-onboarding-step.is-done .cortex-onboarding-step-status {
+  background: var(--color-green, #34d058);
+  color: var(--text-on-accent);
+}
+.cortex-onboarding-step-check {
+  display: inline-flex;
+  align-items: center;
+}
+.cortex-onboarding-step-check .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+.cortex-onboarding-step-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cortex-onboarding-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cortex-onboarding-step-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.cortex-onboarding-step-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: 0;
+  cursor: pointer;
+  transition: filter 80ms ease;
+}
+.cortex-onboarding-step.is-done .cortex-onboarding-step-action {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-onboarding-step-action:hover {
+  filter: brightness(1.1);
+}
+.cortex-onboarding-step-action-icon { display: inline-flex; align-items: center; }
+.cortex-onboarding-step-action-icon .svg-icon { width: 11px; height: 11px; }
+
+.cortex-onboarding-footer {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+  margin-top: 6px;
 }

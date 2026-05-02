@@ -27,7 +27,7 @@ export class GraphStatsModal extends Modal {
   }
 
   async onOpen(): Promise<void> {
-    this.titleEl.setText('HangarX: Memory stats');
+    this.titleEl.setText('HangarX: Knowledge graph stats');
     this.contentEl.empty();
     this.contentEl.addClass('cortex-graph-stats');
 
@@ -96,7 +96,7 @@ export class GraphStatsModal extends Modal {
     if (stats.totalEntities === 0) {
       const hint = c.createDiv({ cls: 'cortex-graph-stats-hint' });
       hint.createEl('p', {
-        text: 'The graph is empty. Run "HangarX: Sync vault to memory layer" from the command palette and check the DevTools console for any ingest errors.',
+        text: 'The graph is empty. Run "HangarX: Sync vault to knowledge graph" from the command palette and check the DevTools console for any ingest errors.',
       });
       this.renderFooter(c, stats, ragStats, elapsedMs);
       return;

@@ -30,6 +30,22 @@ const PATTERNS: Array<{
   headline: string;
   hint?: string;
 }> = [
+  // LLM-provider-specific patterns. These have to come BEFORE the generic
+  // 4xx/5xx patterns because the upstream message bubbles through with the
+  // original status (e.g. Gemini "API key expired" arrives as 400).
+  { match: /api key expired|expired api key|renew the api key/i, kind: 'auth',
+    headline: 'LLM provider API key expired',
+    hint: 'The Gemini/OpenAI/Anthropic key the server is using has expired. Open Settings → HangarX → LLM and paste a fresh key, then save.' },
+  { match: /api key not valid|invalid api key|incorrect api key/i, kind: 'auth',
+    headline: 'LLM provider rejected the API key',
+    hint: 'The key the server sent isn\'t valid. Open Settings → HangarX → LLM and paste a working key, then save.' },
+  { match: /quota.*exceeded|exceeded.*quota|billing|insufficient_quota|resource.?exhausted/i, kind: 'rate_limit',
+    headline: 'LLM provider quota exceeded',
+    hint: 'Your LLM provider account is out of quota or unbilled. Top up the provider account or switch to a different provider in Settings → HangarX → LLM.' },
+  { match: /high demand|temporarily unavailable|model is overloaded|UNAVAILABLE/i, kind: 'server',
+    headline: 'LLM provider temporarily unavailable',
+    hint: 'The model is overloaded on the provider\'s side. Wait a minute and retry, or switch model in Settings → HangarX → LLM.' },
+
   { match: /\b(401|UNAUTHORIZED|AUTH_ERROR|INVALID_API_KEY|invalid bearer)\b/i, kind: 'auth',
     headline: 'Authentication failed',
     hint: 'Open Settings → HangarX. In Cloud mode, sign in again or regenerate your API key in the dashboard. In Local mode, your container is running an older build that still requires a key — re-save the Compose file and rebuild with `docker compose -f docker-compose.cortex.yml up -d --force-recreate`.' },
@@ -42,6 +58,9 @@ const PATTERNS: Array<{
   { match: /\b429\b|rate.?limit|too many requests/i, kind: 'rate_limit',
     headline: 'Rate limited',
     hint: 'HangarX is throttling requests. Wait ~30s and try again.' },
+  { match: /\b(503|SERVICE_UNAVAILABLE)\b/i, kind: 'server',
+    headline: 'Service temporarily unavailable',
+    hint: 'The upstream service is overloaded. Wait a moment and retry.' },
   { match: /\b(5\d\d)\b|INTERNAL|EAI_AGAIN/i, kind: 'server',
     headline: 'HangarX server error',
     hint: 'Check the cortex-api logs (`docker logs cortex-api`) for the underlying cause.' },

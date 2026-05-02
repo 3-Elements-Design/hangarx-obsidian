@@ -14,24 +14,24 @@ import { HANGARX_LOGO_SVG } from '../assets';
 
 const SUGGESTED_PROMPTS = [
   {
-    icon: 'list',
-    label: 'Summarize',
-    text: 'Summarize the most important themes across my recent notes.',
-  },
-  {
     icon: 'history',
     label: 'Catch me up',
-    text: 'What was I working on this week? Highlight key projects, decisions, and open questions.',
+    text: 'Summarize what I\'ve been working on this week. Group by project, highlight key decisions, and call out anything still open.',
   },
   {
-    icon: 'link',
-    label: 'Connect ideas',
-    text: 'What surprising connections exist between the topics in my recent notes?',
+    icon: 'route',
+    label: 'Trace connections',
+    text: 'Find two ideas in my recent notes that seem unrelated but are actually connected through other concepts. Walk me through the path between them.',
   },
   {
     icon: 'lightbulb',
-    label: 'What’s next?',
-    text: 'Based on my recent notes, what should I focus on or explore next?',
+    label: 'Surface decisions',
+    text: 'What important decisions have I documented in the last month? For each one, give me the decision, the reasoning behind it, and any open questions left unanswered.',
+  },
+  {
+    icon: 'search',
+    label: 'Find blind spots',
+    text: 'What topics or entities appear frequently across my notes but don\'t have a dedicated note explaining them? Suggest 3-5 candidates worth writing up as MOC (map-of-content) notes.',
   },
 ];
 
@@ -275,6 +275,7 @@ export class ChatPanel {
     }
 
   }
+
 
   private autoResize(): void {
     this.inputEl.style.height = 'auto';
@@ -995,41 +996,25 @@ export class ChatPanel {
       return;
     }
 
-    // Resolve each entity name to an actual TFile via metadataCache. The
-    // chat returns names like "X (Topic)" or "X" — graph-pull writes these
-    // as "X (Topic).md" / "X.md", and metadataCache has fuzzy matching
-    // baked in (it walks aliases + linkpath normalization). Filtering by
-    // resolved path: clauses sidesteps the fragile filename-as-substring
-    // match, where parens, hyphens, and special chars in entity names
-    // would silently match nothing.
-    const resolvedPaths: string[] = [];
+    // Resolve names to actual vault basenames via metadataCache (handles
+    // aliases + linkpath normalization). Use bare quoted basenames in the
+    // filter — `file:"…"` with parens/Unicode silently fails to match on
+    // some Obsidian versions, while plain `"…" OR "…"` reliably hits both
+    // filename and content.
+    const resolvedBasenames: string[] = [];
     const unresolvedNames: string[] = [];
     for (const n of names) {
       const file = this.app.metadataCache.getFirstLinkpathDest(n, '');
-      if (file?.path) resolvedPaths.push(file.path);
+      if (file?.basename) resolvedBasenames.push(file.basename);
       else unresolvedNames.push(n);
     }
-
-    // Build filter using `file:` (basename match) instead of `path:` (full
-    // path prefix). `path:` is too strict: it requires exact prefix match
-    // and chokes on parens/hyphens/Unicode in names. `file:` matches the
-    // basename and is what users would naturally type into the filter box.
-    //
-    //   resolved   → file:"<basename without .md>"
-    //   unresolved → "<name>" raw — substring match against file content/name
-    const clauses: string[] = [];
-    for (const p of resolvedPaths) {
-      const basename = p.split('/').pop() ?? p;
-      const stem = basename.replace(/\.md$/i, '');
-      clauses.push(`file:"${stem.replace(/"/g, '\\"')}"`);
-    }
-    for (const n of unresolvedNames) clauses.push(`"${n.replace(/"/g, '\\"')}"`);
-    if (clauses.length === 0) {
-      new Notice('Couldn\'t resolve any of the cited entities to vault files. Run a graph pull first?');
+    const allTerms = [...resolvedBasenames, ...unresolvedNames];
+    if (allTerms.length === 0) {
+      new Notice('Couldn\'t resolve any of the cited entities. Run a graph pull first?');
       return;
     }
-    const query = clauses.join(' OR ');
-    const matchedCount = resolvedPaths.length;
+    const query = allTerms.map(t => `"${t.replace(/"/g, '\\"')}"`).join(' OR ');
+    const matchedCount = resolvedBasenames.length;
 
     // Open / focus the core Graph leaf in the main pane.
     let leaf = this.app.workspace.getLeavesOfType('graph')[0];
@@ -1045,87 +1030,97 @@ export class ChatPanel {
     this.app.workspace.revealLeaf(leaf);
     this.host.onNavigate();
 
-    // Try the engine layer first. This is what the renderer reads at draw
-    // time — it works whether or not the controls panel is open, and is
-    // independent of the DOM filter input. Only fall back to driving the
-    // visible input when the engine isn't reachable.
-    const drive = (attempt = 0): void => {
-      const view = leaf!.view as any;
-      const root = view?.containerEl as HTMLElement | undefined;
+    const applied = await this.applyGraphFilter(leaf, query);
+    if (!applied) {
+      new Notice('Couldn\'t apply the graph filter — query copied to clipboard, paste it into the Filters panel.');
+      void navigator.clipboard.writeText(query);
+      return;
+    }
 
-      // The engine has been called both `engine` and `dataEngine` across
-      // versions — try both, plus a couple of alternatives I've seen.
-      const engine = view?.dataEngine ?? view?.engine ?? view?.renderer?.engine;
+    this.renderGraphFilterPill(leaf, matchedCount, query, names.length);
+  }
 
-      console.log('[Cortex] showOnGraph attempt', attempt, {
-        viewKeys: view ? Object.keys(view) : null,
-        engineKeys: engine ? Object.keys(engine) : null,
-        engineOptionsKeys: engine?.options ? Object.keys(engine.options) : null,
-        engineMethods: engine ? Object.keys(engine).filter(k => typeof engine[k] === 'function') : null,
-        currentSearch: engine?.options?.search,
-        hasSearchInput: !!engine?.searchInput,
-        query,
-      });
-
-      let pushedToEngine = false;
-      try {
-        if (engine && typeof engine === 'object' && engine.options) {
-          engine.options.search = query;
-          // Trigger a re-render via every known method on this version.
-          // The first one that exists fires; the rest are no-ops.
-          for (const method of ['updateSearch', 'searchTrigger', 'render', 'requestUpdate', 'onOptionsChange']) {
-            if (typeof engine[method] === 'function') {
-              try { engine[method](); } catch (e) { console.warn('[Cortex] engine.' + method + ' threw:', e); }
-            }
-          }
-          // Some versions cache the input element on the engine itself —
-          // sync it so the visible UI matches the new state.
-          if (engine.searchInput?.value !== undefined) {
-            const proto = Object.getPrototypeOf(engine.searchInput);
-            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-            if (desc?.set) desc.set.call(engine.searchInput, query);
-            else engine.searchInput.value = query;
-            engine.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          pushedToEngine = true;
-        }
-      } catch (e) {
-        console.warn('[Cortex] graph engine path threw:', e);
+  /**
+   * Push a search query into Obsidian's graph view. Tries the internal
+   * engine first (so the dim/highlight kicks in even when the Filters
+   * panel is collapsed), then drives the visible search input as a
+   * second pass — that keeps the UI in sync and is the surface Obsidian
+   * itself uses, so it's the most stable fallback.
+   *
+   * Returns true if either path succeeded.
+   */
+  private async applyGraphFilter(leaf: any, query: string): Promise<boolean> {
+    const waitFor = async <T>(fn: () => T | null | undefined, ms = 1500): Promise<T | null> => {
+      const start = Date.now();
+      while (Date.now() - start < ms) {
+        const v = fn();
+        if (v) return v;
+        await new Promise(r => requestAnimationFrame(() => r(null)));
       }
+      return null;
+    };
+    const setNativeValue = (el: HTMLInputElement, value: string) => {
+      const proto = Object.getPrototypeOf(el);
+      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc?.set) desc.set.call(el, value);
+      else el.value = value;
+    };
 
-      // Always drive the visible input too — keeps it in sync with engine
-      // state so users see the filter they're filtering by.
-      const input = root?.querySelector<HTMLInputElement>(
-        '.graph-control-section input[type="search"], ' +
-        '.graph-control-section input, ' +
-        '.search-input-container input, ' +
-        'input[type="search"], ' +
-        'input[type="text"]',
+    const view: any = leaf.view;
+
+    // Engine path. The engine renders even when the Filters panel is
+    // collapsed, so this is what actually controls dimming.
+    const engine: any = await waitFor(() =>
+      view?.dataEngine ?? view?.engine ?? view?.renderer?.engine,
+    );
+    let engineApplied = false;
+    if (engine) {
+      try {
+        const optsTargets = [engine.options, engine.filterOptions, engine.searchOptions]
+          .filter((o: any) => o && typeof o === 'object');
+        for (const o of optsTargets) o.search = query;
+        if ('searchQuery' in engine) engine.searchQuery = query;
+        for (const m of ['updateSearch', 'searchTrigger', 'render', 'requestUpdate', 'onOptionsChange', 'update']) {
+          if (typeof engine[m] === 'function') {
+            try { engine[m](); } catch { /* swallow */ }
+          }
+        }
+        // Verify by reading back — some option objects are read-only proxies.
+        engineApplied = optsTargets.some((o: any) => o.search === query);
+      } catch {
+        engineApplied = false;
+      }
+    }
+
+    // Visible-input path. Expand the Filters section first — the search
+    // input lives inside it and is removed from the DOM when collapsed.
+    const root: HTMLElement | undefined = view?.containerEl;
+    let inputApplied = false;
+    if (root) {
+      const collapsedHeader = root.querySelector<HTMLElement>(
+        '.graph-control-section.is-collapsed .tree-item-self, ' +
+        '.graph-control-section.is-collapsed > .graph-control-section-header, ' +
+        '.tree-item.graph-control-section.is-collapsed .tree-item-self',
+      );
+      collapsedHeader?.click();
+
+      const input = await waitFor(() =>
+        root.querySelector<HTMLInputElement>(
+          '.graph-controls input[type="text"], ' +
+          '.graph-controls input[type="search"], ' +
+          '.graph-control-section input[type="text"], ' +
+          '.graph-control-section input[type="search"]',
+        ),
       );
       if (input) {
-        const proto = Object.getPrototypeOf(input);
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc?.set) desc.set.call(input, query);
-        else input.value = query;
+        setNativeValue(input, query);
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
+        inputApplied = true;
       }
+    }
 
-      if (pushedToEngine || input) return;
-      if (attempt < 6) {
-        requestAnimationFrame(() => drive(attempt + 1));
-      } else {
-        console.error('[Cortex] Gave up applying graph filter — neither engine nor DOM input reachable.');
-        new Notice('Couldn\'t apply the graph filter — query copied to clipboard, paste it manually.');
-        void navigator.clipboard.writeText(query);
-      }
-    };
-    requestAnimationFrame(() => drive());
-
-    // Pin the pill once the leaf has rendered.
-    requestAnimationFrame(() => {
-      this.renderGraphFilterPill(leaf!, matchedCount, query, names.length);
-    });
+    return engineApplied || inputApplied;
   }
 
   /** Render (or replace) the "Showing N of M entities from chat · Clear" pill on a graph leaf. */
@@ -1154,32 +1149,7 @@ export class ChatPanel {
     clearBtn.textContent = 'Clear';
     clearBtn.className = 'cortex-graph-filter-pill-clear';
     clearBtn.addEventListener('click', () => {
-      // Engine path — clear options.search AND trigger re-render.
-      try {
-        const view = (leaf as any).view;
-        const engine = view?.engine ?? view?.dataEngine;
-        if (engine?.options) engine.options.search = '';
-        if (engine && 'searchQuery' in engine) engine.searchQuery = '';
-        if (typeof engine?.updateSearch === 'function') engine.updateSearch();
-        if (typeof engine?.render === 'function') engine.render();
-        if (typeof engine?.requestUpdate === 'function') engine.requestUpdate();
-      } catch { /* noop */ }
-      // DOM path — zero out the visible input.
-      const input = root.querySelector<HTMLInputElement>(
-        '.graph-control-section input[type="search"], ' +
-        '.graph-control-section input, ' +
-        '.search-input-container input, ' +
-        'input[type="search"], ' +
-        'input[type="text"]',
-      );
-      if (input) {
-        const proto = Object.getPrototypeOf(input);
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc?.set) desc.set.call(input, '');
-        else input.value = '';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+      void this.applyGraphFilter(leaf, '');
       pill.remove();
     });
     pill.appendChild(clearBtn);

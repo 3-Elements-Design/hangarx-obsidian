@@ -198,6 +198,10 @@ export interface CortexSettings {
   /** Legacy. Kept for one release to migrate users to defaultRightPane. */
   showRelatedPane: boolean;
   inlineSuggestionsEnabled: boolean;
+  /** Timestamp of the first time the onboarding modal was opened. Unset
+   *  on a fresh install. Used to gate the auto-open on plugin load — the
+   *  modal opens once, then the user has to invoke it via the command. */
+  onboardingShownAt?: number;
 
   // MCP server (the agent-memory wedge)
   mcpEnabled: boolean;
@@ -480,6 +484,19 @@ export class CortexSettingTab extends PluginSettingTab {
     /* ── 6. Help ──────────────────────────────────────────────────── */
 
     containerEl.createEl('h3', { text: 'Help' });
+
+    new Setting(containerEl)
+      .setName('Onboarding')
+      .setDesc('Replay the 3-step welcome modal — connect, sync, and try a question.')
+      .addButton(b => b
+        .setButtonText('Show onboarding')
+        .onClick(async () => {
+          // Lazy import keeps the cost off the settings render. Don't reset
+          // `onboardingShownAt` — that flag is for the auto-open gate, not
+          // for tracking whether the user has *seen* the modal.
+          const { OnboardingModal } = await import('./views/onboarding-modal');
+          new OnboardingModal(this.plugin.app, this.plugin).open();
+        }));
 
     new Setting(containerEl)
       .setName('Documentation')
@@ -2266,6 +2283,17 @@ export class CortexSettingTab extends PluginSettingTab {
         else delete s.llmKeys[p.id];
         await this.plugin.saveSettings();
         renderStatus();
+        // Mirror chat-provider keys into the runtime LLM config so they
+        // take effect immediately on the running container — no compose
+        // YAML re-save, no `docker compose up -d --force-recreate` needed.
+        // Cohere/Jina aren't chat LLMs (rerankers), and HuggingFace isn't
+        // wired through the runtime config router yet, so skip those.
+        const RUNTIME_PROVIDERS = new Set(['gemini', 'openai', 'anthropic', 'moonshot', 'openrouter', 'xai']);
+        if (RUNTIME_PROVIDERS.has(p.id) && trimmed) {
+          this.pushBYOKToRuntime(p.id, trimmed).catch(err => {
+            console.warn('[Cortex] Couldn\'t push BYOK to runtime config:', err);
+          });
+        }
       });
     });
 
@@ -2443,6 +2471,67 @@ export class CortexSettingTab extends PluginSettingTab {
    * Smoke-test a provider key via the local cortex-api's `/v1/system/test-provider`
    * endpoint. Falls back to a direct provider call when the endpoint isn't available.
    */
+  /**
+   * Push a BYOK chat-provider key into the runtime LLM config so the
+   * cortex-api uses it for the next request without requiring a compose
+   * YAML re-save + container restart. Picks a sensible default model per
+   * provider when the runtime config doesn't already have one set.
+   *
+   * Why this matters: previously the BYOK section wrote only to the
+   * docker-compose env var, which meant updating a key required:
+   *   1. Save to vault (regenerate YAML with new key)
+   *   2. docker compose up -d --force-recreate
+   * Three-step UX for what should be one click. By mirroring BYOK changes
+   * into the runtime config (Postgres-backed, encrypted, picked up by
+   * the model router on every request), the key takes effect immediately.
+   */
+  private async pushBYOKToRuntime(providerId: string, apiKey: string): Promise<void> {
+    // Map BYOK provider IDs (plugin-side) → runtime config provider IDs
+    // (server-side). They're mostly the same, but the runtime config uses
+    // 'grok' where the plugin uses 'xai'.
+    const providerMap: Record<string, 'gemini' | 'openai' | 'anthropic' | 'moonshot' | 'openrouter' | 'grok'> = {
+      gemini: 'gemini',
+      openai: 'openai',
+      anthropic: 'anthropic',
+      moonshot: 'moonshot',
+      openrouter: 'openrouter',
+      xai: 'grok',
+    };
+    const runtimeProvider = providerMap[providerId];
+    if (!runtimeProvider) return;
+
+    // Pick a sensible default chat model per provider so the runtime
+    // config row has both fields populated (server requires provider+model
+    // to be valid). The model router's runtime override only kicks in
+    // when both are present.
+    const defaultModelByProvider: Record<string, string> = {
+      gemini: 'gemini-2.5-flash',
+      openai: 'gpt-4o-mini',
+      anthropic: 'claude-haiku-4-5',
+      moonshot: 'kimi-k2',
+      openrouter: 'anthropic/claude-sonnet-4-6',
+      grok: 'grok-4',
+    };
+
+    // Don't clobber the user's chosen model if they already have one
+    // applied via the LLM (runtime) panel. Read the current config first.
+    let chatModel: string | undefined;
+    try {
+      const current = await this.plugin.client.getLlmConfig();
+      if (current?.chatProvider === runtimeProvider && current?.chatModel) {
+        chatModel = current.chatModel;
+      }
+    } catch { /* fall through */ }
+    chatModel = chatModel ?? defaultModelByProvider[runtimeProvider];
+
+    await this.plugin.client.updateLlmConfig({
+      chatProvider: runtimeProvider,
+      chatModel,
+      chatApiKey: apiKey,
+      useOwnChatKey: true,
+    });
+  }
+
   private async testProviderKey(provider: string, apiKey: string): Promise<boolean> {
     const apiUrl = this.plugin.settings.apiUrl.replace(/\/$/, '');
     try {

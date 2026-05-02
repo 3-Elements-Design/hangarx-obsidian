@@ -1,5 +1,5 @@
 /**
- * Vault sync — pushes vault content into the Cortex memory layer.
+ * Vault sync — pushes vault content into the Cortex knowledge graph.
  *
  * Single-device, single-purpose. Watches the vault for create/modify/delete/
  * rename events and replays them to the Cortex API. Uses a content-hash index
@@ -344,6 +344,72 @@ export class VaultSync {
       }
     }, this.settings.autoSyncDebounceMs);
     this.debounceTimers.set(file.path, timer);
+  }
+
+  /**
+   * Compute a four-bucket diff between this vault and the names of Note
+   * entities the cortex graph has materialized. Caller fetches the graph
+   * names via the cortex client (paginated `exportGraphPage`); this method
+   * does the local walk + set algebra, leaving HTTP and rendering to the
+   * caller.
+   *
+   *   vaultOnly  — markdown files in the vault not represented in the graph
+   *   graphOnly  — Note entity names in the graph with no local file
+   *   drifted    — present in both, but the local file's mtime is newer
+   *                than the last-synced timestamp (likely needs re-sync)
+   *   inSync     — present in both, mtime ≤ last hashedAt
+   *
+   * Match key is the file basename (without `.md`), which is what graph-pull
+   * uses for `noteName` on Note entities.
+   */
+  async computeVaultGraphDiff(graphNoteNames: Set<string>): Promise<{
+    vaultOnly: TFile[];
+    graphOnly: string[];
+    drifted: TFile[];
+    inSync: TFile[];
+  }> {
+    await this.loadIndex();
+    const all = this.app.vault.getMarkdownFiles();
+    const eligible = all.filter(f => !this.isExcluded(f.path));
+
+    const vaultOnly: TFile[] = [];
+    const drifted: TFile[] = [];
+    const inSync: TFile[] = [];
+    const matchedGraphNames = new Set<string>();
+
+    for (const f of eligible) {
+      if (graphNoteNames.has(f.basename)) {
+        matchedGraphNames.add(f.basename);
+        const state = this.index.files[f.path];
+        // No index entry → never synced from this client. Treat as drifted
+        // (the graph has it from another source, but we don't know if the
+        // local content matches what was ingested).
+        if (!state) {
+          drifted.push(f);
+          continue;
+        }
+        if (f.stat.mtime > state.hashedAt) drifted.push(f);
+        else inSync.push(f);
+      } else {
+        vaultOnly.push(f);
+      }
+    }
+
+    const graphOnly: string[] = [];
+    for (const name of graphNoteNames) {
+      if (!matchedGraphNames.has(name)) graphOnly.push(name);
+    }
+
+    return { vaultOnly, graphOnly, drifted, inSync };
+  }
+
+  /**
+   * Public single-file sync — for the "Sync current note" command. Bypasses
+   * the auto-sync debouncer so the user gets an immediate push. Returns the
+   * usual three-way result so the caller can show a Notice based on outcome.
+   */
+  async syncOneFile(file: TFile, opts: { fastMode?: boolean; syncJobId?: string } = {}): Promise<'synced' | 'unchanged' | 'skipped'> {
+    return this.syncFile(file, true, opts);
   }
 
   /**

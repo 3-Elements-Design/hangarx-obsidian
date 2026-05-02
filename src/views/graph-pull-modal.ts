@@ -27,13 +27,11 @@ export class GraphPullModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.modalEl.addClass('cortex-pull-modal');
-    const source = this.opts.sourceLabel
-      ?? (this.opts.source === 'cloud' ? 'cloud' : null);
     const baseTitle =
       this.mode === 'pull' ? 'Pulling Cortex Graph' :
       this.mode === 'preview' ? 'Preview Graph Pull' :
       'Cortex Graph Summary';
-    this.titleEl.setText(source ? `${baseTitle} (from ${source})` : baseTitle);
+    this.titleEl.setText(baseTitle);
 
     const content = this.contentEl;
     content.empty();

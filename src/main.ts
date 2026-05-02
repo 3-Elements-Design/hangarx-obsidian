@@ -12,6 +12,8 @@ import { GraphStatsModal } from './views/graph-stats-modal';
 import { GraphPull } from './services/graph-pull';
 import { GraphPullModal } from './views/graph-pull-modal';
 import { SyncModal } from './views/sync-modal';
+import { DiffModal } from './views/diff-modal';
+import { OnboardingModal } from './views/onboarding-modal';
 import { buildPublicApi, CortexPublicApi } from './api';
 import { inlineSuggestionsExtension } from './services/inline-suggestions';
 import { McpServer, generateToken } from './services/mcp-server';
@@ -181,7 +183,7 @@ export default class CortexPlugin extends Plugin {
     this.addRibbonIcon('refresh-cw', 'HangarX: Sync', () => {
       new SyncModal(this.app, this).open();
     });
-    this.addRibbonIcon('bar-chart-3', 'HangarX: Memory stats', () => {
+    this.addRibbonIcon('bar-chart-3', 'HangarX: Knowledge graph stats', () => {
       new GraphStatsModal(this.app, this.client, this).open();
     });
 
@@ -195,8 +197,36 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-1-sync-quick',
-      name: 'Push vault to memory layer (no modal)',
+      name: 'Push vault to knowledge graph (no modal)',
       callback: () => this.runFullSyncWithFeedback(),
+    });
+
+    // Push the currently-open note immediately, bypassing the 2s auto-sync
+    // debounce. Useful when you've just edited and want it queryable now,
+    // or when auto-sync silently failed and you want to retry without
+    // re-pushing the entire vault.
+    this.addCommand({
+      id: 'cortex-sync-current-note',
+      name: 'Sync current note to knowledge graph',
+      checkCallback: (checking: boolean) => {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view?.file) return false;
+        if (checking) return true;
+        void this.runSyncCurrentNote(view.file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'cortex-vault-graph-diff',
+      name: 'Diff vault ↔ graph (what\'s out of sync)',
+      callback: () => new DiffModal(this.app, this).open(),
+    });
+
+    this.addCommand({
+      id: 'cortex-show-onboarding',
+      name: 'Show onboarding (welcome + setup steps)',
+      callback: () => new OnboardingModal(this.app, this).open(),
     });
 
     this.addCommand({
@@ -222,7 +252,7 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-3-stats',
-      name: 'Memory stats',
+      name: 'Knowledge graph stats',
       callback: () => new GraphStatsModal(this.app, this.client, this).open(),
     });
 
@@ -246,19 +276,19 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-graph-pull',
-      name: 'Import Cortex graph from cloud',
+      name: 'Import knowledge graph from cloud',
       callback: () => this.runGraphPull(),
     });
 
     this.addCommand({
       id: 'cortex-graph-pull-preview',
-      name: 'Preview Cortex graph import',
+      name: 'Preview knowledge graph import',
       callback: () => this.runGraphPullPreview(),
     });
 
     this.addCommand({
       id: 'cortex-graph-pull-summary',
-      name: 'Cortex graph summary (fast)',
+      name: 'Knowledge graph summary (fast)',
       callback: () => this.runGraphPullSummary(),
     });
 
@@ -282,6 +312,31 @@ export default class CortexPlugin extends Plugin {
 
     this.addSettingTab(new CortexSettingTab(this.app, this));
 
+    // Right-click on a note (file-explorer or editor menu) → "Sync to
+    // knowledge graph". Same code path as the command but discoverable
+    // without Cmd-P.
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        if (!('extension' in file) || (file as any).extension !== 'md') return;
+        menu.addItem(item => {
+          item.setTitle('HangarX: Sync to knowledge graph')
+            .setIcon('refresh-cw')
+            .onClick(() => void this.runSyncCurrentNote(file as import('obsidian').TFile));
+        });
+      }),
+    );
+    this.registerEvent(
+      this.app.workspace.on('editor-menu', (menu, _editor, view) => {
+        const file = view?.file;
+        if (!file || file.extension !== 'md') return;
+        menu.addItem(item => {
+          item.setTitle('HangarX: Sync this note to knowledge graph')
+            .setIcon('refresh-cw')
+            .onClick(() => void this.runSyncCurrentNote(file));
+        });
+      }),
+    );
+
     // Wait for the vault to finish initial scan before wiring file events.
     this.app.workspace.onLayoutReady(async () => {
       this.registerEvent(this.app.vault.on('create', f => this.sync.scheduleFileSync(f)));
@@ -302,6 +357,25 @@ export default class CortexPlugin extends Plugin {
       }
       if (this.settings.mcpEnabled && this.settings.apiKey && this.settings.workspaceId) {
         setTimeout(() => this.toggleMcpServer(true), 1500);
+      }
+
+      // First-run onboarding: open the welcome modal once. We skip the
+      // auto-open if the user already looks fully set up — re-installing
+      // into an existing vault shouldn't re-greet them.
+      if (!this.settings.onboardingShownAt) {
+        const isCloud = this.settings.connectionMode === 'cloud';
+        const looksConnected = isCloud
+          ? !!(this.settings.apiKey && this.settings.workspaceId)
+          : !!this.settings.workspaceId;
+        if (!looksConnected) {
+          // Defer past the first paint so Obsidian's own UI is settled.
+          setTimeout(() => new OnboardingModal(this.app, this).open(), 800);
+        } else {
+          // Quietly mark as shown — they don't need the onboarding, but we
+          // don't want it popping later if they sign out and back in.
+          this.settings.onboardingShownAt = Date.now();
+          void this.saveSettings();
+        }
       }
     });
   }
@@ -471,6 +545,38 @@ export default class CortexPlugin extends Plugin {
   /**
    * Wrap fullSync with pre-flight checks + visible error feedback.
    */
+  /**
+   * Push a single note to the knowledge graph immediately. Bypasses the
+   * 2-second auto-sync debounce. Surfaces a Notice so the user knows
+   * whether it actually pushed (vs. skipped because the hash matched).
+   */
+  private async runSyncCurrentNote(file: import('obsidian').TFile): Promise<void> {
+    const s = this.settings;
+    if (!s.workspaceId) {
+      new Notice('HangarX: Workspace ID is empty. Open Settings → Connection.');
+      return;
+    }
+    const notice = new Notice(`HangarX: syncing ${file.basename}…`, 0);
+    try {
+      const result = await this.sync.syncOneFile(file);
+      notice.hide();
+      switch (result) {
+        case 'synced':
+          new Notice(`✓ Synced ${file.basename}`, 3000);
+          break;
+        case 'unchanged':
+          new Notice(`${file.basename} is already up to date`, 3000);
+          break;
+        case 'skipped':
+          new Notice(`Skipped ${file.basename} (empty or excluded by filters)`, 4000);
+          break;
+      }
+    } catch (e) {
+      notice.hide();
+      new Notice(`HangarX sync failed for ${file.basename}: ${(e as Error).message}`, 6000);
+    }
+  }
+
   private async runFullSyncWithFeedback(): Promise<void> {
     const s = this.settings;
     if (!s.apiKey) {
@@ -548,7 +654,7 @@ export default class CortexPlugin extends Plugin {
       return;
     }
     const confirmed = confirm(
-      `Force-resync ${fileCount} files into the memory layer?\n\n` +
+      `Force-resync ${fileCount} files into the knowledge graph?\n\n` +
       `This wipes the local sync index and re-pushes every file. Use this after the server-side graph has been reset (e.g. Docker volume wiped). It's safe — your notes themselves aren't touched.`,
     );
     if (!confirmed) return;

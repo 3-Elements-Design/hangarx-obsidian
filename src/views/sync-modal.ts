@@ -9,8 +9,8 @@ type Action = 'push' | 'pull' | 'both' | 'force-reingest';
  * Unified Sync entry point. Replaces the old fire-and-forget Notice toast
  * triggered by the ribbon icon. Three actions:
  *
- *   - Push:  send vault changes to the cloud / local memory layer
- *   - Pull:  materialize cloud entities + relationships into vault markdown
+ *   - Push:  send vault changes to the knowledge graph
+ *   - Pull:  materialize knowledge graph entities + relationships into vault markdown
  *   - Both:  push first, then pull (order doesn't matter to data quality —
  *            arbitrary; push picked first because it's the more common path)
  *
@@ -57,7 +57,7 @@ export class SyncModal extends Modal {
     // ── Stat tiles (vault + graph) — render with placeholders, fill async
     const stats = c.createDiv({ cls: 'cortex-sync-stats' });
     const vaultTile = this.statTile(stats, 'file-text', '—', 'Notes in vault');
-    const graphTile = this.statTile(stats, 'network', '—', 'Entities in graph');
+    const graphTile = this.statTile(stats, 'network', '—', 'Entities in knowledge graph');
     const changesTile = this.statTile(stats, 'history', '—', 'Changed since last sync');
 
     // ── Mismatch banner — populated by fillStats once it knows the counts.
@@ -69,14 +69,14 @@ export class SyncModal extends Modal {
     const actions = c.createDiv({ cls: 'cortex-sync-actions' });
     this.actionCard(actions, {
       icon: 'arrow-up',
-      title: 'Push vault to memory layer',
-      description: 'Send your changed notes to the graph. Skips files that haven\'t changed since last sync.',
+      title: 'Push vault to knowledge graph',
+      description: 'Send your changed notes to the knowledge graph. Skips files that haven\'t changed since last sync.',
       onClick: () => void this.runAction('push'),
     });
     this.actionCard(actions, {
       icon: 'arrow-down',
-      title: 'Import graph into vault',
-      description: 'Materialize cloud entities + relationships as markdown so they appear in Obsidian\'s graph view.',
+      title: 'Import knowledge graph into vault',
+      description: 'Materialize knowledge graph entities + relationships as markdown so they appear in Obsidian\'s graph view.',
       onClick: () => void this.runAction('pull'),
     });
     this.actionCard(actions, {
@@ -85,10 +85,20 @@ export class SyncModal extends Modal {
       description: 'Push first, then import. Keeps both sides aligned.',
       onClick: () => void this.runAction('both'),
     });
+    this.actionCard(actions, {
+      icon: 'git-compare',
+      title: 'Diff vault ↔ knowledge graph',
+      description: 'See what\'s out of sync — local notes missing from the knowledge graph, knowledge graph entities orphaned, files newer than their last sync.',
+      onClick: () => {
+        this.close();
+        // Lazy import keeps the modal-loading cost off the picker render.
+        void import('./diff-modal').then(m => new m.DiffModal(this.app, this.plugin).open());
+      },
+    });
     const forceCard = this.actionCard(actions, {
       icon: 'rotate-cw',
       title: 'Force re-ingest entire vault',
-      description: 'Wipes the local sync index and re-pushes every note. Use after the server graph has been reset (e.g. Docker volume wiped).',
+      description: 'Wipes the local sync index and re-pushes every note. Use after the server knowledge graph has been reset (e.g. Docker volume wiped).',
       onClick: () => void this.runAction('force-reingest'),
     });
     forceCard.addClass('cortex-sync-action-danger');
@@ -209,7 +219,7 @@ export class SyncModal extends Modal {
     if (action === 'force-reingest') {
       const fileCount = this.app.vault.getMarkdownFiles().length;
       const ok = confirm(
-        `Force-resync ${fileCount} files into the memory layer?\n\n` +
+        `Force-resync ${fileCount} files into the knowledge graph?\n\n` +
         `This wipes the local sync index and re-pushes every note. Use after the server graph has been reset (Docker volume wiped, container rebuilt). Your notes themselves aren't touched.`,
       );
       if (!ok) return;
