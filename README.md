@@ -1,10 +1,14 @@
+<p align="center">
+  <img src="./docs/images/preview.png" alt="HangarX inside Obsidian — graph view, file explorer, and Ask your vault chat panel side-by-side" width="100%" />
+</p>
+
 # HangarX for Obsidian
 
 > Ask questions about your vault. Share its knowledge with every AI agent on your machine.
 
 HangarX turns your Obsidian notes into a queryable knowledge graph — then exposes that graph to Claude Desktop, Claude Code, Cursor, Cline, Windsurf, and any other [MCP-compatible](https://modelcontextprotocol.io) agent. Same vault. Every tool. No copy-pasting context between chats.
 
-📖 [Full docs](https://app.hangarx.ai/obsidian) · 🌐 [Dashboard](https://app.hangarx.ai) · 🐛 [Issues](https://github.com/3-Elements-Design/hangarx-obsidian/issues)
+📖 [Full docs](https://app.hangarx.ai/obsidian#docs) · 🌐 [Dashboard](https://app.hangarx.ai) · 🐛 [Issues](https://github.com/3-Elements-Design/hangarx-obsidian/issues)
 
 ---
 
