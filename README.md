@@ -124,6 +124,7 @@ Click **Connect** and HangarX merges its MCP server entry into the agent's confi
 | `cortex_recall` / `cortex_remember` | Persistent memory across agent sessions |
 | `cortex_related` | Find semantically similar notes |
 | `cortex_search_entities` | Search by person / project / concept name |
+| `cortex_stats` | Totals + per-type breakdowns for the whole graph |
 | `cortex_paths` | Trace connections between two ideas |
 | `cortex_contradictions` | Find conflicting claims across notes |
 | `cortex_suggest_links` | Wikilink suggestions for the current note |

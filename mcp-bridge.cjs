@@ -40,14 +40,39 @@ function forward(line) {
     res.on('end', function () {
       if (isNotification) return;
       const trimmed = body.trim();
-      if (trimmed) process.stdout.write(trimmed + '\n');
+      // Defensive: if the server returned a non-2xx status, the body may
+      // not be a valid JSON-RPC envelope. Wrap it in one so the MCP
+      // client gets an actionable error instead of a Zod validation
+      // explosion. 2xx responses are forwarded as-is.
+      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+        if (trimmed) process.stdout.write(trimmed + '\n');
+        return;
+      }
+      var msg = 'cortex-api returned HTTP ' + res.statusCode;
+      try {
+        var parsed = trimmed ? JSON.parse(trimmed) : null;
+        if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+          msg += ' — ' + parsed.error.message;
+        } else if (parsed && typeof parsed.error === 'string') {
+          msg += ' — ' + parsed.error;
+        } else if (trimmed) {
+          msg += ' — ' + trimmed.slice(0, 200);
+        }
+      } catch (e) {
+        if (trimmed) msg += ' — ' + trimmed.slice(0, 200);
+      }
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: request.id == null ? null : request.id,
+        error: { code: -32000, message: msg },
+      }) + '\n');
     });
   });
   req.on('error', function (err) {
     if (isNotification) return;
     process.stdout.write(JSON.stringify({
       jsonrpc: '2.0',
-      id: request.id,
+      id: request.id == null ? null : request.id,
       error: { code: -32000, message: 'bridge: ' + err.message },
     }) + '\n');
   });

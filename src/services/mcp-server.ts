@@ -138,12 +138,21 @@ export class McpServer {
       return;
     }
 
-    // Auth: require Bearer token matching `this.token`.
+    // Auth: require Bearer token matching `this.token`. Return a proper
+    // JSON-RPC error envelope (not a bare {error: '…'} object) — the MCP
+    // client validates every response against the JSON-RPC schema and
+    // surfaces a wall of "invalid_union" errors when it gets a malformed
+    // body. Use id:null per JSON-RPC §5.1 for connection-level errors
+    // where the request id isn't yet known.
     const authHeader = req.headers['authorization'] ?? '';
     const expected = `Bearer ${this.token}`;
     if (authHeader !== expected) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32001, message: 'unauthorized — invalid or missing bearer token' },
+      }));
       return;
     }
 
@@ -419,6 +428,34 @@ export class McpServer {
           };
         },
       },
+      // ── Graph introspection (totals + breakdowns for the whole vault) ──
+      {
+        name: 'cortex_stats',
+        description:
+          'Return totals and per-type breakdowns for the user\'s whole knowledge graph: ' +
+          'total entity count, total relationship count, top entity types with counts and ' +
+          'sample properties, and top relationship types with counts. Use when the user asks ' +
+          '"how many notes/entities/relationships do I have?", "what kinds of things are in ' +
+          'my graph?", or wants a high-level overview of vault scale and structure. This is ' +
+          'a single O(1) query against the graph backend — far better than enumerating via ' +
+          'cortex_search_entities.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+        handler: async () => {
+          const stats = await c.getGraphStats();
+          // Trim entity/relationship types to top 25 each — agents rarely
+          // need the long tail and large response payloads choke some
+          // MCP clients.
+          return {
+            totalEntities: stats.totalEntities,
+            totalRelationships: stats.totalRelationships,
+            entityTypes: stats.entityTypes.slice(0, 25),
+            relationshipTypes: stats.relationshipTypes.slice(0, 25),
+          };
+        },
+      },
       // ── Ingest (write external sources into the graph) ──
       {
         name: 'cortex_ingest_url',
@@ -501,14 +538,39 @@ function forward(line) {
     res.on('end', function () {
       if (isNotification) return;
       const trimmed = body.trim();
-      if (trimmed) process.stdout.write(trimmed + '\\n');
+      // Defensive: if the server returned a non-2xx status, the body may
+      // not be a valid JSON-RPC envelope. Wrap it in one so the MCP
+      // client gets an actionable error instead of a Zod validation
+      // explosion. 2xx responses are forwarded as-is.
+      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+        if (trimmed) process.stdout.write(trimmed + '\\n');
+        return;
+      }
+      var msg = 'cortex-api returned HTTP ' + res.statusCode;
+      try {
+        var parsed = trimmed ? JSON.parse(trimmed) : null;
+        if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+          msg += ' — ' + parsed.error.message;
+        } else if (parsed && typeof parsed.error === 'string') {
+          msg += ' — ' + parsed.error;
+        } else if (trimmed) {
+          msg += ' — ' + trimmed.slice(0, 200);
+        }
+      } catch (e) {
+        if (trimmed) msg += ' — ' + trimmed.slice(0, 200);
+      }
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: request.id == null ? null : request.id,
+        error: { code: -32000, message: msg },
+      }) + '\\n');
     });
   });
   req.on('error', function (err) {
     if (isNotification) return;
     process.stdout.write(JSON.stringify({
       jsonrpc: '2.0',
-      id: request.id,
+      id: request.id == null ? null : request.id,
       error: { code: -32000, message: 'bridge: ' + err.message },
     }) + '\\n');
   });
