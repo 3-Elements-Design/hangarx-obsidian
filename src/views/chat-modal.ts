@@ -1,6 +1,7 @@
 import { App, Modal } from 'obsidian';
 import type { CortexClient } from '../cortex-client';
 import type { CortexSettings } from '../settings';
+import type CortexPlugin from '../main';
 import { ConversationStore } from '../services/conversation-store';
 import { ChatPanel } from './chat-panel';
 
@@ -17,6 +18,7 @@ export class ChatModal extends Modal {
     private client: CortexClient,
     private store: ConversationStore,
     private settings: CortexSettings,
+    private plugin: CortexPlugin,
   ) {
     super(app);
   }
@@ -28,6 +30,7 @@ export class ChatModal extends Modal {
       contentEl: this.contentEl,
       parentEl: this.contentEl,
       onNavigate: () => this.close(),
+      saveSettings: () => this.plugin.saveSettings(),
     });
     this.panel.mount();
   }

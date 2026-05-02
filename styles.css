@@ -949,6 +949,18 @@
 }
 .cortex-chat-action-btn .svg-icon { width: 12px; height: 12px; }
 
+/* Pin/auto toggle — surfaces persistent state inline rather than burying
+   it in settings. Filled accent background when on. */
+.cortex-chat-action-toggle.is-on {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+.cortex-chat-action-toggle.is-on:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
 /* Inline entity links in answer text */
 .cortex-chat-inline-link {
   color: var(--interactive-accent);

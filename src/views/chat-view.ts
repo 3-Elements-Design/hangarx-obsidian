@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { CortexClient } from '../cortex-client';
 import type { CortexSettings } from '../settings';
+import type CortexPlugin from '../main';
 import { ConversationStore } from '../services/conversation-store';
 import { ChatPanel } from './chat-panel';
 
@@ -25,6 +26,7 @@ export class ChatView extends ItemView {
     private client: CortexClient,
     private store: ConversationStore,
     private settings: CortexSettings,
+    private plugin: CortexPlugin,
   ) {
     super(leaf);
   }
@@ -49,6 +51,7 @@ export class ChatView extends ItemView {
         // Side panel stays mounted when the user clicks an entity / citation
         // / inline link. Note opens in the main pane.
       },
+      saveSettings: () => this.plugin.saveSettings(),
     });
     this.panel.mount();
   }

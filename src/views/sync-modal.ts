@@ -41,6 +41,7 @@ export class SyncModal extends Modal {
     const c = this.contentEl;
     c.empty();
     c.addClass('cortex-sync-body');
+    this.titleEl.setText('HangarX Sync');
 
     // ── Connection badge ────────────────────────────────────────────
     const s = this.plugin.settings;
@@ -334,12 +335,20 @@ export class SyncModal extends Modal {
     this.receiptItem(grid, 'trash-2', `${pushResult.deleted} removed`, 'cortex-pull-stat-delete');
     this.receiptItem(grid, 'minus-circle', `${pushResult.skipped} skipped (unchanged)`, 'cortex-pull-stat-total');
 
-    cancelBtn.setText('Done');
-    cancelBtn.removeAttribute('disabled');
-    cancelBtn.addClass('mod-cta');
-    cancelBtn.onclick = () => this.close();
-
-    const again = btnRow.createEl('button', { text: 'Run another' });
+    // Fresh button row — the original cancelBtn still has the abort listener
+    // attached, so re-skinning it as "Done" leaves stale handlers. Easier to
+    // wipe and rebuild than chase listeners.
+    btnRow.empty();
+    const doneBtn = btnRow.createEl('button', {
+      text: 'Done',
+      cls: 'mod-cta',
+      attr: { type: 'button' },
+    });
+    doneBtn.addEventListener('click', () => this.close());
+    const again = btnRow.createEl('button', {
+      text: 'Run another',
+      attr: { type: 'button' },
+    });
     again.addEventListener('click', () => void this.renderPicker());
   }
 

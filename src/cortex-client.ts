@@ -195,7 +195,7 @@ export interface CommunitySummary {
 }
 
 export type LlmProvider =
-  | 'openai' | 'anthropic' | 'gemini' | 'grok' | 'moonshot' | 'ollama' | 'openrouter';
+  | 'openai' | 'anthropic' | 'gemini' | 'grok' | 'moonshot' | 'ollama' | 'openrouter' | 'huggingface';
 
 export interface LlmRuntimeConfig {
   chatProvider?: LlmProvider;

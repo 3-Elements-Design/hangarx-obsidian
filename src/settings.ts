@@ -198,6 +198,11 @@ export interface CortexSettings {
   /** Legacy. Kept for one release to migrate users to defaultRightPane. */
   showRelatedPane: boolean;
   inlineSuggestionsEnabled: boolean;
+  /** When on, every chat answer auto-pushes its cited entities into
+   *  Obsidian's graph view filter — non-matching nodes dim, matching ones
+   *  stay highlighted. Off by default; user can toggle from the chat
+   *  composer's gear menu or here in settings. */
+  autoShowAnswerOnGraph: boolean;
   /** Timestamp of the first time the onboarding modal was opened. Unset
    *  on a fresh install. Used to gate the auto-open on plugin load — the
    *  modal opens once, then the user has to invoke it via the command. */
@@ -273,6 +278,7 @@ export const DEFAULT_SETTINGS: CortexSettings = {
   defaultRightPane: 'chat',
   showRelatedPane: true,
   inlineSuggestionsEnabled: true,
+  autoShowAnswerOnGraph: false,
   mcpEnabled: false,
   mcpPort: 7474,
   mcpToken: '',
@@ -480,6 +486,13 @@ export class CortexSettingTab extends PluginSettingTab {
       .addToggle(t => t
         .setValue(this.plugin.settings.inlineSuggestionsEnabled)
         .onChange(async v => { this.plugin.settings.inlineSuggestionsEnabled = v; await this.plugin.saveSettings(); }));
+
+    new Setting(containerEl)
+      .setName('Auto-highlight chat answers on graph')
+      .setDesc('After every chat answer, automatically push its cited entities into Obsidian\'s graph view filter — non-matching nodes dim, matching ones stay highlighted. Toggle is also accessible from the "Show on graph" button on each answer.')
+      .addToggle(t => t
+        .setValue(this.plugin.settings.autoShowAnswerOnGraph)
+        .onChange(async v => { this.plugin.settings.autoShowAnswerOnGraph = v; await this.plugin.saveSettings(); }));
 
     /* ── 6. Help ──────────────────────────────────────────────────── */
 
@@ -1447,6 +1460,12 @@ export class CortexSettingTab extends PluginSettingTab {
         { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash' },
         { id: 'meta-llama/llama-3.3-70b-instruct', label: 'meta-llama/llama-3.3-70b-instruct' },
       ],
+      huggingface: [
+        { id: 'moonshotai/Kimi-K2.5', label: 'Kimi K2.5 (Moonshot)' },
+        { id: 'moonshotai/Kimi-K2-Instruct-0905', label: 'Kimi K2 Instruct 0905 (Moonshot)' },
+        { id: 'meta-llama/Llama-3.3-70B-Instruct', label: 'Llama 3.3 70B (Meta)' },
+        { id: 'Qwen/Qwen2.5-72B-Instruct', label: 'Qwen 2.5 72B (Alibaba)' },
+      ],
     };
 
     let modelsByProvider: Record<string, Array<{ id: string; label: string }>> = { ...FALLBACK_MODELS };
@@ -1466,7 +1485,7 @@ export class CortexSettingTab extends PluginSettingTab {
       .setDesc('Which LLM provider runs chat completions. Greyed-out providers need a key configured first.')
       .addDropdown(d => {
         const s = this.plugin.settings;
-        for (const id of ['openai', 'anthropic', 'gemini', 'grok', 'moonshot', 'ollama', 'openrouter']) {
+        for (const id of ['openai', 'anthropic', 'gemini', 'grok', 'moonshot', 'huggingface', 'ollama', 'openrouter']) {
           const keyField = runtimeProviderKeyField(id);
           const hasKey = keyField === null || !!s.llmKeys[keyField];
           const label = hasKey
@@ -2286,9 +2305,9 @@ export class CortexSettingTab extends PluginSettingTab {
         // Mirror chat-provider keys into the runtime LLM config so they
         // take effect immediately on the running container — no compose
         // YAML re-save, no `docker compose up -d --force-recreate` needed.
-        // Cohere/Jina aren't chat LLMs (rerankers), and HuggingFace isn't
-        // wired through the runtime config router yet, so skip those.
-        const RUNTIME_PROVIDERS = new Set(['gemini', 'openai', 'anthropic', 'moonshot', 'openrouter', 'xai']);
+        // Cohere/Jina are reranker-only; everything else maps to a runtime
+        // provider id.
+        const RUNTIME_PROVIDERS = new Set(['gemini', 'openai', 'anthropic', 'moonshot', 'openrouter', 'xai', 'huggingface']);
         if (RUNTIME_PROVIDERS.has(p.id) && trimmed) {
           this.pushBYOKToRuntime(p.id, trimmed).catch(err => {
             console.warn('[Cortex] Couldn\'t push BYOK to runtime config:', err);
@@ -2489,13 +2508,14 @@ export class CortexSettingTab extends PluginSettingTab {
     // Map BYOK provider IDs (plugin-side) → runtime config provider IDs
     // (server-side). They're mostly the same, but the runtime config uses
     // 'grok' where the plugin uses 'xai'.
-    const providerMap: Record<string, 'gemini' | 'openai' | 'anthropic' | 'moonshot' | 'openrouter' | 'grok'> = {
+    const providerMap: Record<string, 'gemini' | 'openai' | 'anthropic' | 'moonshot' | 'openrouter' | 'grok' | 'huggingface'> = {
       gemini: 'gemini',
       openai: 'openai',
       anthropic: 'anthropic',
       moonshot: 'moonshot',
       openrouter: 'openrouter',
       xai: 'grok',
+      huggingface: 'huggingface',
     };
     const runtimeProvider = providerMap[providerId];
     if (!runtimeProvider) return;
@@ -2511,6 +2531,7 @@ export class CortexSettingTab extends PluginSettingTab {
       moonshot: 'kimi-k2',
       openrouter: 'anthropic/claude-sonnet-4-6',
       grok: 'grok-4',
+      huggingface: 'moonshotai/Kimi-K2.5',
     };
 
     // Don't clobber the user's chosen model if they already have one
@@ -2675,6 +2696,7 @@ function providerLabel(id: string): string {
     case 'gemini':     return 'Google Gemini';
     case 'grok':       return 'xAI (Grok)';
     case 'moonshot':   return 'Moonshot (Kimi)';
+    case 'huggingface': return 'HuggingFace (HF Inference)';
     case 'ollama':     return 'Ollama (local)';
     case 'openrouter': return 'OpenRouter';
     default:           return id;
@@ -2693,10 +2715,11 @@ function runtimeProviderKeyField(runtimeId: string): keyof CortexSettings['llmKe
     case 'anthropic':  return 'anthropic';
     case 'gemini':     return 'gemini';
     case 'grok':       return 'xai';
-    case 'moonshot':   return 'moonshot';
-    case 'openrouter': return 'openrouter';
-    case 'ollama':     return null;
-    default:           return null;
+    case 'moonshot':    return 'moonshot';
+    case 'openrouter':  return 'openrouter';
+    case 'huggingface': return 'huggingface';
+    case 'ollama':      return null;
+    default:            return null;
   }
 }
 
@@ -2712,9 +2735,10 @@ function keysFieldToRuntimeProvider(keysFieldId: string): string | null {
     case 'anthropic':  return 'anthropic';
     case 'gemini':     return 'gemini';
     case 'xai':        return 'grok';
-    case 'moonshot':   return 'moonshot';
-    case 'openrouter': return 'openrouter';
-    default:           return null;
+    case 'moonshot':    return 'moonshot';
+    case 'openrouter':  return 'openrouter';
+    case 'huggingface': return 'huggingface';
+    default:            return null;
   }
 }
 

@@ -33,6 +33,9 @@ const PATTERNS: Array<{
   // LLM-provider-specific patterns. These have to come BEFORE the generic
   // 4xx/5xx patterns because the upstream message bubbles through with the
   // original status (e.g. Gemini "API key expired" arrives as 400).
+  { match: /HuggingFace denied this request|Inference-Providers access/i, kind: 'auth',
+    headline: 'HuggingFace denied this request',
+    hint: 'Your HF token can\'t access this inference provider. Either (a) enable provider access at https://huggingface.co/settings/inference-providers and add credits if it\'s a paid provider (novita / fireworks-ai / together), or (b) switch the model in Settings → HangarX → LLM to one with the ":hf-inference" suffix (free serverless tier).' },
   { match: /api key expired|expired api key|renew the api key/i, kind: 'auth',
     headline: 'LLM provider API key expired',
     hint: 'The Gemini/OpenAI/Anthropic key the server is using has expired. Open Settings → HangarX → LLM and paste a fresh key, then save.' },

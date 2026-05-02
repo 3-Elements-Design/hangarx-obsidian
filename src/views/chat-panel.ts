@@ -71,6 +71,10 @@ export interface ChatPanelHost {
   contentEl: HTMLElement;
   parentEl?: HTMLElement;
   onNavigate: () => void;
+  /** Callback the panel invokes after mutating `settings` so the plugin can
+   *  flush them to disk. Both chat-view and chat-modal wire this to
+   *  plugin.saveSettings(). Optional — older host implementations no-op. */
+  saveSettings?: () => Promise<void> | void;
 }
 
 /**
@@ -496,6 +500,12 @@ export class ChatPanel {
       if (res.citations?.length) this.allCitations.push(...res.citations);
 
       this.renderTurnActions(aiBubble, res.answer, res);
+
+      // Auto-highlight on graph if the user has the persistent toggle on.
+      // Fire-and-forget — don't block the chat flow on graph rendering.
+      if (this.settings.autoShowAnswerOnGraph && res.entities?.length) {
+        void this.showEntitiesOnGraph(res.entities);
+      }
 
       this.currentTurns.push({ role: 'ai', content: res.answer, payload: res });
       this.exportBtn.style.display = '';
@@ -923,7 +933,47 @@ export class ChatPanel {
       const graphBtn = actions.createEl('button', { cls: 'cortex-chat-action-btn', attr: { 'aria-label': 'Show on graph' } });
       setIcon(graphBtn, 'network');
       graphBtn.createEl('span', { text: 'Show on graph' });
-      graphBtn.addEventListener('click', () => void this.showEntitiesOnGraph(payload.entities));
+      // Hold-shift on the button to also flip the auto-toggle for future
+      // answers, so power users don't have to dig into settings.
+      graphBtn.addEventListener('click', evt => {
+        if (evt.shiftKey) {
+          this.settings.autoShowAnswerOnGraph = !this.settings.autoShowAnswerOnGraph;
+          void this.host.saveSettings?.();
+          new Notice(
+            `Auto-highlight on graph ${this.settings.autoShowAnswerOnGraph ? 'enabled' : 'disabled'} for future answers.`,
+            3000,
+          );
+        }
+        void this.showEntitiesOnGraph(payload.entities);
+      });
+
+      // Pin/auto toggle inline so the user has visible state, not just a
+      // hidden Shift modifier. Filled state = currently auto-applying.
+      const autoBtn = actions.createEl('button', {
+        cls: 'cortex-chat-action-btn cortex-chat-action-toggle',
+        attr: { 'aria-label': 'Auto-highlight every answer on the graph' },
+      });
+      const refreshAutoBtn = () => {
+        autoBtn.empty();
+        const on = this.settings.autoShowAnswerOnGraph;
+        autoBtn.toggleClass('is-on', on);
+        setIcon(autoBtn, on ? 'pin' : 'pin-off');
+        autoBtn.createEl('span', { text: on ? 'Auto: on' : 'Auto: off' });
+        autoBtn.title = on
+          ? 'Every chat answer auto-highlights cited entities on the graph. Click to turn off.'
+          : 'Click to auto-highlight cited entities on the graph for every chat answer.';
+      };
+      refreshAutoBtn();
+      autoBtn.addEventListener('click', async () => {
+        this.settings.autoShowAnswerOnGraph = !this.settings.autoShowAnswerOnGraph;
+        await this.host.saveSettings?.();
+        refreshAutoBtn();
+        // If the user just turned it on with an answer already on screen,
+        // immediately apply to this answer's entities.
+        if (this.settings.autoShowAnswerOnGraph && payload.entities.length > 0) {
+          void this.showEntitiesOnGraph(payload.entities);
+        }
+      });
     }
 
     const copyBtn = actions.createEl('button', { cls: 'cortex-chat-action-btn', attr: { 'aria-label': 'Copy answer' } });
@@ -1016,8 +1066,19 @@ export class ChatPanel {
     const query = allTerms.map(t => `"${t.replace(/"/g, '\\"')}"`).join(' OR ');
     const matchedCount = resolvedBasenames.length;
 
-    // Open / focus the core Graph leaf in the main pane.
+    // Open / focus the core Graph leaf in the main pane. If a graph leaf
+    // already exists AND its engine looks corrupted (filterOptions.search
+    // is a string instead of a SearchComponent — happens when an earlier
+    // version of this plugin clobbered it directly), detach and recreate
+    // it. Otherwise reuse.
     let leaf = this.app.workspace.getLeavesOfType('graph')[0];
+    if (leaf && isGraphEngineCorrupted(leaf)) {
+      // Detach the broken leaf — its engine is in a state where every
+      // render call throws "filterOptions.search.getValue is not a
+      // function". Replacement leaf rebuilds the SearchComponent.
+      leaf.detach();
+      leaf = null as any;
+    }
     if (!leaf) {
       const newLeaf = this.app.workspace.getLeaf(false);
       if (!newLeaf) {
@@ -1037,86 +1098,91 @@ export class ChatPanel {
       return;
     }
 
+    // Confirmation Notice helps confirm the click landed even if the
+    // dimming is subtle (e.g. when most entities aren't yet in the vault).
+    // Shows the first couple of terms so the user can compare against the
+    // visible filter input.
+    const preview = allTerms.slice(0, 3).map(t => `"${t}"`).join(', ');
+    const more = allTerms.length > 3 ? ` (+${allTerms.length - 3} more)` : '';
+    new Notice(`Graph filter set to ${preview}${more}. Non-matching nodes should now be dimmed.`, 4000);
+
     this.renderGraphFilterPill(leaf, matchedCount, query, names.length);
   }
 
   /**
-   * Push a search query into Obsidian's graph view. Tries the internal
-   * engine first (so the dim/highlight kicks in even when the Filters
-   * panel is collapsed), then drives the visible search input as a
-   * second pass — that keeps the UI in sync and is the surface Obsidian
-   * itself uses, so it's the most stable fallback.
+   * Push a search query into Obsidian's graph view. The graph filter dims
+   * non-matching nodes when its `engine.options.search` changes AND the
+   * engine re-renders. Different Obsidian versions name the engine and the
+   * re-render method differently, so we try every known surface and verify
+   * by reading the DOM input back.
    *
-   * Returns true if either path succeeded.
+   * Returns true if at least one path took effect.
    */
   private async applyGraphFilter(leaf: any, query: string): Promise<boolean> {
-    const waitFor = async <T>(fn: () => T | null | undefined, ms = 1500): Promise<T | null> => {
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const waitFor = async <T>(fn: () => T | null | undefined, ms = 2000): Promise<T | null> => {
       const start = Date.now();
       while (Date.now() - start < ms) {
         const v = fn();
         if (v) return v;
-        await new Promise(r => requestAnimationFrame(() => r(null)));
+        await sleep(50);
       }
       return null;
-    };
-    const setNativeValue = (el: HTMLInputElement, value: string) => {
-      const proto = Object.getPrototypeOf(el);
-      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-      if (desc?.set) desc.set.call(el, value);
-      else el.value = value;
     };
 
     const view: any = leaf.view;
 
-    // Engine path. The engine renders even when the Filters panel is
-    // collapsed, so this is what actually controls dimming.
-    const engine: any = await waitFor(() =>
-      view?.dataEngine ?? view?.engine ?? view?.renderer?.engine,
-    );
-    let engineApplied = false;
-    if (engine) {
-      try {
-        const optsTargets = [engine.options, engine.filterOptions, engine.searchOptions]
-          .filter((o: any) => o && typeof o === 'object');
-        for (const o of optsTargets) o.search = query;
-        if ('searchQuery' in engine) engine.searchQuery = query;
-        for (const m of ['updateSearch', 'searchTrigger', 'render', 'requestUpdate', 'onOptionsChange', 'update']) {
-          if (typeof engine[m] === 'function') {
-            try { engine[m](); } catch { /* swallow */ }
-          }
-        }
-        // Verify by reading back — some option objects are read-only proxies.
-        engineApplied = optsTargets.some((o: any) => o.search === query);
-      } catch {
-        engineApplied = false;
-      }
+    // 1. Expand the Filters section if collapsed — Obsidian's graph view
+    //    keeps the filter input in the DOM either way, but expanding gives
+    //    the user visible feedback that the query was applied.
+    const root: HTMLElement | undefined = view?.containerEl;
+    if (root) {
+      const collapsed = root.querySelector<HTMLElement>(
+        '.graph-control-section.is-collapsed > .tree-item-self, ' +
+        '.graph-control-section.is-collapsed > .graph-control-section-header, ' +
+        '.tree-item.graph-control-section.is-collapsed > .tree-item-self',
+      );
+      collapsed?.click();
     }
 
-    // Visible-input path. Expand the Filters section first — the search
-    // input lives inside it and is removed from the DOM when collapsed.
-    const root: HTMLElement | undefined = view?.containerEl;
+    // 2. We deliberately do NOT touch engine.options or engine.filterOptions.
+    //    On modern Obsidian, those `.search` fields are SearchComponent
+    //    objects (or wrappers that the engine expects to call .getValue()
+    //    on). Assigning a raw string clobbers the component and causes
+    //    every subsequent updateSearch() to throw "…search.getValue is
+    //    not a function" — leaving the graph permanently broken until the
+    //    leaf is recreated. The DOM-input path below is the surface
+    //    Obsidian's own UI uses, and it manages the SearchComponent
+    //    correctly via its bound oninput handler.
+    let engineApplied = false;
+
+    // 3. DOM path — drive the visible search input. The graph controls
+    //    panel has 13+ inputs (one per setting/toggle), so we have to
+    //    target the Filters section's search input specifically. Strategy:
+    //    walk every section, find the one whose first input has a search
+    //    placeholder (Obsidian uses "Search files…" for the filter input).
     let inputApplied = false;
     if (root) {
-      const collapsedHeader = root.querySelector<HTMLElement>(
-        '.graph-control-section.is-collapsed .tree-item-self, ' +
-        '.graph-control-section.is-collapsed > .graph-control-section-header, ' +
-        '.tree-item.graph-control-section.is-collapsed .tree-item-self',
-      );
-      collapsedHeader?.click();
-
-      const input = await waitFor(() =>
-        root.querySelector<HTMLInputElement>(
-          '.graph-controls input[type="text"], ' +
-          '.graph-controls input[type="search"], ' +
-          '.graph-control-section input[type="text"], ' +
-          '.graph-control-section input[type="search"]',
-        ),
-      );
+      const input = await waitFor(() => findGraphFilterSearchInput(root));
       if (input) {
-        setNativeValue(input, query);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+        // Use HTMLInputElement.prototype's native setter directly — the
+        // immediate proto doesn't own the `value` setter.
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype, 'value',
+        )?.set;
+        if (nativeSetter) nativeSetter.call(input, query);
+        else input.value = query;
+
+        // Real InputEvent — Obsidian binds via oninput and some handlers
+        // null-check `event.inputType`.
+        input.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: query,
+        }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        inputApplied = true;
+        inputApplied = input.value === query;
       }
     }
 
@@ -1311,6 +1377,60 @@ export class ChatPanel {
  * (not prettified) because the filter has to match what the entity files are
  * actually named on disk (graph-pull writes them as `<name> (<type>).md`).
  */
+/**
+ * Detect whether the graph leaf's engine is in the "filterOptions.search
+ * has been replaced with a string" state. That happens when an earlier
+ * version of this plugin (or any other plugin) wrote a raw string to
+ * `engine.filterOptions.search`, clobbering the SearchComponent that
+ * Obsidian's `updateSearch()` calls `.getValue()` on. Once corrupted,
+ * every render throws and the only fix is to detach the leaf and let
+ * Obsidian rebuild the engine from scratch.
+ */
+function isGraphEngineCorrupted(leaf: any): boolean {
+  try {
+    const view: any = leaf.view;
+    const engine: any = view?.dataEngine ?? view?.renderer?.engine ?? view?.engine;
+    if (!engine) return false;
+    const fo = engine.filterOptions;
+    if (!fo || typeof fo !== 'object') return false;
+    // Healthy: fo.search is either a SearchComponent (object with getValue)
+    // or doesn't exist yet. Corrupted: fo.search is a string.
+    return typeof fo.search === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find the search input that controls graph filtering. The graph controls
+ * panel contains 13+ inputs (one per setting), so we can't just grab the
+ * first one. Strategy:
+ *   1. Try the Filters section by data attribute (most reliable).
+ *   2. Fall back to placeholder match — Obsidian labels it "Search files…".
+ *   3. Last resort: the first text/search input inside `.graph-controls`,
+ *      which has historically been the filter input.
+ */
+function findGraphFilterSearchInput(root: HTMLElement): HTMLInputElement | null {
+  // Modern Obsidian tags the section with data-section-id or data-section
+  const taggedSection = root.querySelector<HTMLElement>(
+    '.graph-control-section[data-section="filter"], ' +
+    '.graph-control-section[data-section-id="filter"], ' +
+    '.tree-item.graph-control-section.mod-search',
+  );
+  if (taggedSection) {
+    const input = taggedSection.querySelector<HTMLInputElement>('input[type="search"], input[type="text"]');
+    if (input) return input;
+  }
+  // Placeholder-based — works across most versions
+  const byPlaceholder = root.querySelector<HTMLInputElement>(
+    '.graph-controls input[placeholder*="earch"]',
+  );
+  if (byPlaceholder) return byPlaceholder;
+  // Last-resort: the first input inside the first section
+  const firstSection = root.querySelector<HTMLElement>('.graph-control-section, .graph-controls');
+  return firstSection?.querySelector<HTMLInputElement>('input[type="search"], input[type="text"]') ?? null;
+}
+
 function uniqueNames(entities: AskEntity[]): string[] {
   const set = new Set<string>();
   for (const e of entities) {

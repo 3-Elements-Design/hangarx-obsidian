@@ -165,7 +165,7 @@ export default class CortexPlugin extends Plugin {
     // be opened manually via command.
     this.registerView(RELATED_VIEW_TYPE, leaf => new RelatedView(leaf, this.client));
     this.registerView(CHAT_VIEW_TYPE, leaf =>
-      new ChatView(leaf, this.client, this.conversations, this.settings),
+      new ChatView(leaf, this.client, this.conversations, this.settings, this),
     );
 
     // OAuth callback handler. The dashboard's consent page redirects users
@@ -265,7 +265,7 @@ export default class CortexPlugin extends Plugin {
     this.addCommand({
       id: 'cortex-ask-modal',
       name: 'Ask your vault (modal)',
-      callback: () => new ChatModal(this.app, this.client, this.conversations, this.settings).open(),
+      callback: () => new ChatModal(this.app, this.client, this.conversations, this.settings, this).open(),
     });
 
     this.addCommand({
