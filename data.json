@@ -30,7 +30,7 @@
   "connectorEncryptionKey": "dd20236bd26393229cf5f22895db73a79c8feb048f2e0d466609c65aa87bc56f",
   "llmEncryptionKey": "7b29d2b46173187c2ad5731a9cb7fd89132a897b49812e6f88b2d1ebb3e936a6",
   "llmKeys": {
-    "gemini": "AIzaSyBGuH8BHI_x2Xm0hwIcl_MZqzIu1hb1c4I"
+    "gemini": "AIzaSyAuv2mCEWD8xjYtaniJig-qhOFbSuuvcEk"
   },
   "embeddingPreset": "ollama",
   "deviceId": "dd6eb2ce-b9bc-49f1-af4a-c510ca499e7c",

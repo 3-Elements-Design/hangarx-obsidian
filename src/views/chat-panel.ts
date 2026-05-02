@@ -620,7 +620,9 @@ export class ChatPanel {
   }
 
   private renderEntities(parent: HTMLElement, entities: AskEntity[]): void {
-    const section = this.collapsibleSection(parent, `Entities (${entities.length})`, true);
+    // Section is collapsed by default — entities/sources lists are reference
+    // detail, not the primary answer. Users expand when they want to drill in.
+    const section = this.collapsibleSection(parent, `Entities (${entities.length})`, false);
     const grid = section.createEl('div', { cls: 'cortex-chat-entities' });
     const byType = new Map<string, AskEntity[]>();
     for (const e of entities) {
@@ -633,29 +635,57 @@ export class ChatPanel {
       group.createEl('div', { cls: 'cortex-chat-entity-type', text: type });
       const chips = group.createEl('div', { cls: 'cortex-chat-chips' });
       for (const e of list) {
+        // Pre-resolve so we know whether to render the chip as a real link
+        // (clickable, opens the file) or a non-link badge (file isn't in
+        // vault yet — chips that did nothing on click felt broken).
+        const target = this.resolveEntityToFile(e);
         const chip = chips.createEl('a', {
-          cls: 'cortex-chat-chip',
+          cls: target ? 'cortex-chat-chip is-linked' : 'cortex-chat-chip',
           text: prettifyEntityName(e.name),
           href: '#',
         });
         const titleParts: string[] = [];
         if (e.description) titleParts.push(e.description);
         if (e.name !== prettifyEntityName(e.name)) titleParts.push(`id: ${e.name}`);
+        if (!target) titleParts.push('Not in vault yet — run a graph pull to materialize.');
         if (titleParts.length) chip.setAttr('title', titleParts.join('\n'));
         chip.addEventListener('click', evt => {
           evt.preventDefault();
-          const target = this.app.metadataCache.getFirstLinkpathDest(e.name, '');
           if (target) {
             this.app.workspace.getLeaf(false).openFile(target);
             this.host.onNavigate();
+          } else {
+            new Notice(`"${prettifyEntityName(e.name)}" isn't a file in this vault yet. Pull the graph from settings to materialize it.`);
           }
         });
       }
     }
   }
 
+  /**
+   * Try several name variants to find the entity's vault file. The chat
+   * returns names in different forms depending on how the entity was
+   * extracted; graph-pull writes them as `<name> (<type>).md`. Try the
+   * raw name first, then strip any trailing "(Type)" suffix the chat may
+   * have appended, then add one if missing — covers both directions.
+   */
+  private resolveEntityToFile(e: AskEntity): import('obsidian').TFile | null {
+    const tries = new Set<string>();
+    if (e.name) tries.add(e.name);
+    // Strip a trailing " (Foo)" if present (chat sometimes embeds the type).
+    const stripped = e.name.replace(/\s*\([^)]+\)\s*$/, '').trim();
+    if (stripped) tries.add(stripped);
+    // Add the type suffix the way graph-pull writes it on disk.
+    if (e.type && stripped) tries.add(`${stripped} (${e.type})`);
+    for (const name of tries) {
+      const f = this.app.metadataCache.getFirstLinkpathDest(name, '');
+      if (f) return f;
+    }
+    return null;
+  }
+
   private renderDocuments(parent: HTMLElement, documents: AskDocument[]): void {
-    const section = this.collapsibleSection(parent, `Documents (${documents.length})`, true);
+    const section = this.collapsibleSection(parent, `Documents (${documents.length})`, false);
     const list = section.createEl('div', { cls: 'cortex-chat-docs' });
     for (const d of documents) {
       const row = list.createEl('div', { cls: 'cortex-chat-doc' });
@@ -688,18 +718,23 @@ export class ChatPanel {
   }
 
   private renderCitations(parent: HTMLElement, citations: AskCitation[]): void {
-    const section = parent.createEl('div', { cls: 'cortex-chat-section cortex-chat-citations' });
-    section.createEl('div', { cls: 'cortex-chat-section-label', text: 'Sources' });
+    // Sources panel collapsed by default — same reasoning as Entities/Documents.
+    const section = this.collapsibleSection(parent, `Sources (${citations.length})`, false);
+    section.addClass('cortex-chat-citations');
     const chips = section.createEl('div', { cls: 'cortex-chat-chips' });
     for (const c of citations) {
+      // Pre-resolve so chips with no matching vault file render as muted
+      // badges instead of broken-looking links.
+      const target = c.url ? null : this.resolveCitationToFile(c.source);
       const chip = chips.createEl('a', {
-        cls: 'cortex-chat-chip',
+        cls: target || c.url ? 'cortex-chat-chip is-linked' : 'cortex-chat-chip',
         text: prettifyEntityName(c.source),
         href: c.url ?? '#',
       });
       const tooltipParts: string[] = [];
       if (c.text) tooltipParts.push(c.text);
       if (c.source !== prettifyEntityName(c.source)) tooltipParts.push(`id: ${c.source}`);
+      if (!c.url && !target) tooltipParts.push('Not in vault yet — pull the graph to materialize.');
       if (tooltipParts.length) chip.setAttr('title', tooltipParts.join('\n'));
       if (c.url) {
         chip.target = '_blank';
@@ -707,14 +742,28 @@ export class ChatPanel {
       } else {
         chip.addEventListener('click', evt => {
           evt.preventDefault();
-          const target = this.app.metadataCache.getFirstLinkpathDest(c.source, '');
           if (target) {
             this.app.workspace.getLeaf(false).openFile(target);
             this.host.onNavigate();
+          } else {
+            new Notice(`"${prettifyEntityName(c.source)}" isn't a file in this vault yet. Pull the graph from settings to materialize it.`);
           }
         });
       }
     }
+  }
+
+  /** Same fuzzy resolution as resolveEntityToFile, for citations which only have a name string. */
+  private resolveCitationToFile(source: string): import('obsidian').TFile | null {
+    if (!source) return null;
+    const tries = new Set<string>([source]);
+    const stripped = source.replace(/\s*\([^)]+\)\s*$/, '').trim();
+    if (stripped) tries.add(stripped);
+    for (const name of tries) {
+      const f = this.app.metadataCache.getFirstLinkpathDest(name, '');
+      if (f) return f;
+    }
+    return null;
   }
 
   private renderErrorCard(parent: HTMLElement, err: unknown, headline: string, onRetry?: () => void): void {
@@ -961,12 +1010,19 @@ export class ChatPanel {
       else unresolvedNames.push(n);
     }
 
-    // Build filter:
-    //   - resolved → path:"<exact path>" (no false positives)
-    //   - unresolved → fall back to "<name>" so partial substring match
-    //     can still pull them in if metadataCache missed something
+    // Build filter using `file:` (basename match) instead of `path:` (full
+    // path prefix). `path:` is too strict: it requires exact prefix match
+    // and chokes on parens/hyphens/Unicode in names. `file:` matches the
+    // basename and is what users would naturally type into the filter box.
+    //
+    //   resolved   → file:"<basename without .md>"
+    //   unresolved → "<name>" raw — substring match against file content/name
     const clauses: string[] = [];
-    for (const p of resolvedPaths) clauses.push(`path:"${p.replace(/"/g, '\\"')}"`);
+    for (const p of resolvedPaths) {
+      const basename = p.split('/').pop() ?? p;
+      const stem = basename.replace(/\.md$/i, '');
+      clauses.push(`file:"${stem.replace(/"/g, '\\"')}"`);
+    }
     for (const n of unresolvedNames) clauses.push(`"${n.replace(/"/g, '\\"')}"`);
     if (clauses.length === 0) {
       new Notice('Couldn\'t resolve any of the cited entities to vault files. Run a graph pull first?');
@@ -989,37 +1045,82 @@ export class ChatPanel {
     this.app.workspace.revealLeaf(leaf);
     this.host.onNavigate();
 
-    // Drive the DOM filter input directly. The engine internals (`engine
-    // .options.search` + `engine.render()`) vary across Obsidian versions
-    // and can no-op without erroring; the search-input event path is the
-    // most reliable. Defer two rAFs because freshly-created leaves render
-    // their controls *after* their viewState resolves.
-    const tryDriveFilter = (attempt = 0): void => {
-      const root = (leaf!.view as any)?.containerEl as HTMLElement | undefined;
+    // Try the engine layer first. This is what the renderer reads at draw
+    // time — it works whether or not the controls panel is open, and is
+    // independent of the DOM filter input. Only fall back to driving the
+    // visible input when the engine isn't reachable.
+    const drive = (attempt = 0): void => {
+      const view = leaf!.view as any;
+      const root = view?.containerEl as HTMLElement | undefined;
+
+      // The engine has been called both `engine` and `dataEngine` across
+      // versions — try both, plus a couple of alternatives I've seen.
+      const engine = view?.dataEngine ?? view?.engine ?? view?.renderer?.engine;
+
+      console.log('[Cortex] showOnGraph attempt', attempt, {
+        viewKeys: view ? Object.keys(view) : null,
+        engineKeys: engine ? Object.keys(engine) : null,
+        engineOptionsKeys: engine?.options ? Object.keys(engine.options) : null,
+        engineMethods: engine ? Object.keys(engine).filter(k => typeof engine[k] === 'function') : null,
+        currentSearch: engine?.options?.search,
+        hasSearchInput: !!engine?.searchInput,
+        query,
+      });
+
+      let pushedToEngine = false;
+      try {
+        if (engine && typeof engine === 'object' && engine.options) {
+          engine.options.search = query;
+          // Trigger a re-render via every known method on this version.
+          // The first one that exists fires; the rest are no-ops.
+          for (const method of ['updateSearch', 'searchTrigger', 'render', 'requestUpdate', 'onOptionsChange']) {
+            if (typeof engine[method] === 'function') {
+              try { engine[method](); } catch (e) { console.warn('[Cortex] engine.' + method + ' threw:', e); }
+            }
+          }
+          // Some versions cache the input element on the engine itself —
+          // sync it so the visible UI matches the new state.
+          if (engine.searchInput?.value !== undefined) {
+            const proto = Object.getPrototypeOf(engine.searchInput);
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc?.set) desc.set.call(engine.searchInput, query);
+            else engine.searchInput.value = query;
+            engine.searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          pushedToEngine = true;
+        }
+      } catch (e) {
+        console.warn('[Cortex] graph engine path threw:', e);
+      }
+
+      // Always drive the visible input too — keeps it in sync with engine
+      // state so users see the filter they're filtering by.
       const input = root?.querySelector<HTMLInputElement>(
         '.graph-control-section input[type="search"], ' +
         '.graph-control-section input, ' +
         '.search-input-container input, ' +
-        'input[type="search"]',
+        'input[type="search"], ' +
+        'input[type="text"]',
       );
       if (input) {
-        // Use the native value setter so React/Obsidian's listeners fire.
         const proto = Object.getPrototypeOf(input);
         const desc = Object.getOwnPropertyDescriptor(proto, 'value');
         if (desc?.set) desc.set.call(input, query);
         else input.value = query;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        return;
       }
-      if (attempt < 5) {
-        requestAnimationFrame(() => tryDriveFilter(attempt + 1));
+
+      if (pushedToEngine || input) return;
+      if (attempt < 6) {
+        requestAnimationFrame(() => drive(attempt + 1));
       } else {
-        new Notice('Couldn\'t find the graph filter input. Filter copied to clipboard — paste it manually.');
+        console.error('[Cortex] Gave up applying graph filter — neither engine nor DOM input reachable.');
+        new Notice('Couldn\'t apply the graph filter — query copied to clipboard, paste it manually.');
         void navigator.clipboard.writeText(query);
       }
     };
-    requestAnimationFrame(() => tryDriveFilter());
+    requestAnimationFrame(() => drive());
 
     // Pin the pill once the leaf has rendered.
     requestAnimationFrame(() => {
@@ -1053,11 +1154,23 @@ export class ChatPanel {
     clearBtn.textContent = 'Clear';
     clearBtn.className = 'cortex-graph-filter-pill-clear';
     clearBtn.addEventListener('click', () => {
+      // Engine path — clear options.search AND trigger re-render.
+      try {
+        const view = (leaf as any).view;
+        const engine = view?.engine ?? view?.dataEngine;
+        if (engine?.options) engine.options.search = '';
+        if (engine && 'searchQuery' in engine) engine.searchQuery = '';
+        if (typeof engine?.updateSearch === 'function') engine.updateSearch();
+        if (typeof engine?.render === 'function') engine.render();
+        if (typeof engine?.requestUpdate === 'function') engine.requestUpdate();
+      } catch { /* noop */ }
+      // DOM path — zero out the visible input.
       const input = root.querySelector<HTMLInputElement>(
         '.graph-control-section input[type="search"], ' +
         '.graph-control-section input, ' +
         '.search-input-container input, ' +
-        'input[type="search"]',
+        'input[type="search"], ' +
+        'input[type="text"]',
       );
       if (input) {
         const proto = Object.getPrototypeOf(input);
@@ -1065,6 +1178,7 @@ export class ChatPanel {
         if (desc?.set) desc.set.call(input, '');
         else input.value = '';
         input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
       }
       pill.remove();
     });
@@ -1122,16 +1236,21 @@ export class ChatPanel {
       regex.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = regex.exec(text))) {
+        // Capture the matched name into a local — the click handler runs
+        // long after this loop ends, by which point the shared `match`
+        // variable has been advanced (and ultimately set to null when
+        // regex.exec returns null), so `match![1]` would throw.
+        const matchedName = match[1];
         if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
-        const entity = entityMap.get(match[1].toLowerCase());
+        const entity = entityMap.get(matchedName.toLowerCase());
         const link = document.createElement('a');
         link.className = 'cortex-chat-inline-link';
-        link.textContent = match[1];
+        link.textContent = matchedName;
         link.href = '#';
         if (entity?.description) link.title = entity.description;
         link.addEventListener('click', evt => {
           evt.preventDefault();
-          const target = this.app.metadataCache.getFirstLinkpathDest(match![1], '');
+          const target = this.app.metadataCache.getFirstLinkpathDest(matchedName, '');
           if (target) {
             this.app.workspace.getLeaf(false).openFile(target);
             this.host.onNavigate();

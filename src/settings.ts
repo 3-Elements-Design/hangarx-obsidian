@@ -1410,8 +1410,15 @@ export class CortexSettingTab extends PluginSettingTab {
         { id: 'kimi-k2-turbo', label: 'kimi-k2-turbo' },
       ],
       ollama: [
-        { id: 'llama3', label: 'llama3 (8B)' },
+        { id: 'gemma4', label: 'gemma4 (Google, latest)' },
+        { id: 'gemma4:4b', label: 'gemma4:4b (Google, 4B)' },
+        { id: 'gemma4:12b', label: 'gemma4:12b (Google, 12B)' },
+        { id: 'gemma4:27b', label: 'gemma4:27b (Google, 27B)' },
+        { id: 'gemma3:4b', label: 'gemma3:4b (Google, 4B)' },
+        { id: 'gemma3:12b', label: 'gemma3:12b (Google, 12B)' },
+        { id: 'gemma3:27b', label: 'gemma3:27b (Google, 27B)' },
         { id: 'llama3.2', label: 'llama3.2' },
+        { id: 'llama3', label: 'llama3 (8B)' },
         { id: 'qwen2.5', label: 'qwen2.5 (7B)' },
         { id: 'mistral', label: 'mistral (7B)' },
         { id: 'phi3', label: 'phi3' },
@@ -1538,14 +1545,21 @@ export class CortexSettingTab extends PluginSettingTab {
       const arr = Array.isArray(reg) ? reg : Object.values(reg);
       for (const p of arr) {
         // Server `ModelInfo` uses `name`, plugin uses `label`. Accept either.
-        const list = (p.models ?? []).map((m: any) => ({
+        const serverList = (p.models ?? []).map((m: any) => ({
           id: m.id,
           label: m.label || m.name || m.id,
         }));
-        // Only overwrite the fallback when the server actually returned models
-        // for this provider — otherwise keep the seed so the user has options.
-        if (list.length > 0) {
-          modelsByProvider[p.id] = list;
+        // Merge fallback + server entries by id rather than letting the
+        // server fully replace the fallback. Server wins on label conflicts
+        // (richer metadata like context window in the name), but any model
+        // the plugin knows about that the server doesn't list still shows
+        // up — handles the common case where the plugin shipped a release
+        // that knows about a model the cloud cortex-api hasn't deployed yet.
+        const merged = new Map<string, { id: string; label: string }>();
+        for (const m of modelsByProvider[p.id] ?? []) merged.set(m.id, m);
+        for (const m of serverList) merged.set(m.id, m);
+        if (merged.size > 0) {
+          modelsByProvider[p.id] = Array.from(merged.values());
         }
       }
     }).catch(e => {

@@ -577,6 +577,22 @@
   text-decoration: none;
 }
 
+/* Linked chip — entity / source has a matching vault file (or external URL).
+ * Subtle accent border and accent-tinted text to distinguish from badges. */
+.cortex-chat-chip.is-linked {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+}
+.cortex-chat-chip.is-linked:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-modifier-hover));
+  border-color: var(--interactive-accent);
+}
+/* Plain chip (no vault match) — muted, click shows a Notice instead of opening. */
+.cortex-chat-chip:not(.is-linked) {
+  color: var(--text-muted);
+  cursor: help;
+}
+
 /* Documents */
 .cortex-chat-docs { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .cortex-chat-doc {
