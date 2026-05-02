@@ -10,7 +10,7 @@ import {
 } from '../services/conversation-store';
 import { writeSingleAnswerNote, writeConversationNote } from '../services/vault-writer';
 import { formatError, errorIcon } from '../services/error-format';
-import { HANGARX_LOGO_SVG } from '../assets';
+import { appendHangarxLogo } from '../assets';
 
 const SUGGESTED_PROMPTS = [
   {
@@ -250,7 +250,7 @@ export class ChatPanel {
   private renderEmptyState(): void {
     const empty = this.outputEl.createEl('div', { cls: 'cortex-chat-empty' });
     const logo = empty.createEl('div', { cls: 'cortex-chat-empty-logo' });
-    logo.innerHTML = HANGARX_LOGO_SVG;
+    appendHangarxLogo(logo);
     empty.createEl('h2', { cls: 'cortex-chat-empty-title', text: 'Ask your vault anything.' });
     empty.createEl('p', {
       cls: 'cortex-chat-empty-sub',

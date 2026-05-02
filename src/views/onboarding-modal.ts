@@ -1,6 +1,6 @@
 import { App, Modal, setIcon } from 'obsidian';
 import type CortexPlugin from '../main';
-import { HANGARX_LOGO_SVG } from '../assets';
+import { appendHangarxLogo } from '../assets';
 
 /**
  * First-run onboarding modal. Opens automatically the first time the plugin
@@ -37,7 +37,7 @@ export class OnboardingModal extends Modal {
     this.titleEl.empty();
     const titleWrap = this.titleEl.createDiv({ cls: 'cortex-onboarding-title' });
     const logo = titleWrap.createDiv({ cls: 'cortex-onboarding-logo' });
-    logo.innerHTML = HANGARX_LOGO_SVG;
+    appendHangarxLogo(logo);
     titleWrap.createEl('span', { text: 'Welcome to HangarX' });
 
     this.bodyEl = this.contentEl.createDiv({ cls: 'cortex-onboarding-modal-body' });

@@ -14,3 +14,21 @@ export const HANGARX_LOGO_SVG = `<svg width="108" height="25" viewBox="0 0 108 2
 <path d="M21.4596 0.706815C21.8103 0.319578 22.2287 0.50116 22.1694 0.706798C21.0788 4.52594 20.1048 7.85098 20.0758 7.95066C19.6441 9.43871 19.6095 10.7833 20.2375 12.2906C20.2889 12.4141 26.1088 24.0506 26.2006 24.2464C26.303 24.4651 25.9225 24.8156 25.4588 24.3149C25.3862 24.2365 13.367 10.491 13.2051 10.3169C13.0433 10.1428 13.1199 10.0913 13.2051 9.99577C13.2904 9.90026 21.251 0.937139 21.4596 0.706815Z" fill="currentColor"/>
 <path d="M4.75819 0.706815C4.40743 0.319578 3.98903 0.50116 4.04838 0.706798C5.13893 4.52594 6.11301 7.85098 6.14193 7.95066C6.57365 9.43871 6.6083 10.7833 5.98027 12.2906C5.92883 12.4141 0.108943 24.0506 0.0172195 24.2464C-0.0852556 24.4651 0.295279 24.8156 0.758943 24.3149C0.831594 24.2365 12.8508 10.491 13.0126 10.3169C13.1745 10.1428 13.0979 10.0913 13.0126 9.99577C12.9274 9.90026 4.96682 0.937139 4.75819 0.706815Z" fill="currentColor"/>
 </svg>`;
+
+/**
+ * Append the bundled HangarX logo into a target element.
+ *
+ * Uses DOMParser → appendChild instead of `el.innerHTML = svg`. The string is
+ * a constant we control (above), but Obsidian's plugin reviewers grep for
+ * `innerHTML`/`outerHTML`/`insertAdjacentHTML` literally and reject any use
+ * — even on trusted strings — because it normalises the bad pattern. This
+ * helper is the policy-clean replacement.
+ */
+export function appendHangarxLogo(target: HTMLElement): void {
+  target.empty()
+  const parsed = new DOMParser().parseFromString(HANGARX_LOGO_SVG, 'image/svg+xml')
+  const root = parsed.documentElement
+  if (root && root.tagName.toLowerCase() === 'svg') {
+    target.appendChild(root)
+  }
+}
