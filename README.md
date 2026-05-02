@@ -1,110 +1,193 @@
-# HangarX — Agent Memory for Obsidian
+# HangarX for Obsidian
 
-**Turn your vault into permanent memory for every AI agent on your machine.**
+> Ask questions about your vault. Share its knowledge with every AI agent on your machine.
 
-Claude Desktop, Claude Code, Cursor, Cline, Windsurf — they all forget the moment a session ends. HangarX changes that. Your notes, decisions, and project history become a structured memory layer that *every* MCP-compatible agent can read and write to. One vault, every tool, no copy-pasting context between chats.
+HangarX turns your Obsidian notes into a queryable knowledge graph — then exposes that graph to Claude Desktop, Claude Code, Cursor, Cline, Windsurf, and any other [MCP-compatible](https://modelcontextprotocol.io) agent. Same vault. Every tool. No copy-pasting context between chats.
 
-> 🤖 Cross-tool memory · 🧠 Multi-hop reasoning · 🔍 Semantic Q&A · 🔒 100% local option
+📖 [Full docs](https://app.hangarx.ai/obsidian) · 🌐 [Dashboard](https://app.hangarx.ai) · 🐛 [Issues](https://github.com/3-Elements-Design/hangarx-obsidian/issues)
 
 ---
 
-## Why this exists
+## Why
 
-You've already written everything. Your standups, your design docs, your half-finished thoughts. The problem isn't capturing knowledge — it's making it usable by the agents you work with every day.
+You've already written everything: standups, design docs, half-finished thoughts. The bottleneck isn't capturing knowledge — it's making it usable by the agents you use every day.
 
 - **Claude Desktop forgot what you decided last week.** HangarX remembers.
 - **Cursor doesn't know your team's conventions.** HangarX answers from your notes.
-- **You repeat yourself across every new chat.** HangarX is the source of truth all of them read.
+- **You repeat yourself across every new chat.** HangarX is the one source of truth they all read.
 
-It's not another chat UI bolted onto Obsidian. It's the connective tissue that makes your existing AI tools dramatically more useful.
+## Who it's for
 
----
-
-## Quick start — 60 seconds (Cloud)
-
-Cloud mode is the fastest way to try HangarX. Sign-in is OAuth — no key copy-paste.
-
-1. **Install** the plugin from Obsidian's Community Plugins → search **"HangarX"**.
-2. Open Settings → **HangarX — Agent Memory** → Mode: **☁️ Cloud (HangarX hosted)**.
-3. Click **Sign in with HangarX**. Your browser opens, you approve, and the plugin auto-fills your API key + workspace.
-4. Click **Sync vault to memory layer** in the command palette (⌘P) — or wait for the next startup sync.
-
-That's it. Your vault is now searchable, your agents can read it, and you can ask questions from inside Obsidian.
-
-> First sync uploads everything. Subsequent syncs only push files that changed. The `.cortex/` folder, `.obsidian/`, and your templates are excluded by default.
+- **Note-takers** who want a smarter Q&A surface than the built-in search.
+- **Agent power users** running 2+ AI tools that should share context.
+- **Teams** with a single vault of decisions, runbooks, and architectural notes.
+- **Privacy-first users** who want everything to stay on their laptop (Local mode = no cloud, no data leaves your machine).
 
 ---
 
-## Quick start — Local Docker (private)
+## What it does
+
+| | |
+|---|---|
+| 💬 **Ask your vault** | Multi-hop chat with citations back to the source notes. Lives in the right sidebar. |
+| 🌐 **Native graph integration** | Push chat answers into Obsidian's built-in Graph view — non-matching nodes dim, cited entities stay highlighted. |
+| 🔄 **Two-way sync** | Push notes to the graph, pull graph entities back as markdown, or diff the two sides to see what's drifted. |
+| 🤖 **MCP bridge** | One-click connect to Claude Desktop, Claude Code, Cursor, Cline, Windsurf — they get tools to query your vault. |
+| ✨ **Inline link suggestions** | Ghost-text `[[wikilinks]]` while you type, driven by entity matches in your graph. |
+| 🔒 **Local or cloud** | Cloud is one-click OAuth. Local runs everything in Docker on your laptop. |
+
+---
+
+## Install
+
+**Community plugins (recommended).**
+
+1. Settings → **Community plugins → Browse**
+2. Search **"HangarX"** → **Install** → **Enable**
+3. The first-run onboarding modal walks you through Cloud / Local setup.
 
 <details>
-<summary>Run everything on your machine — your notes never leave the laptop.</summary>
+<summary><strong>Other install options</strong></summary>
 
-1. Install the plugin and switch Mode to **🏠 Local (Docker)**.
-2. Click **Save to vault** (writes `docker-compose.cortex.yml` next to your notes).
-3. Open a terminal in your vault folder and run:
-   ```bash
-   GEMINI_API_KEY="your-key" docker compose -f docker-compose.cortex.yml up -d
-   ```
-4. Switch back to Obsidian — the red status pill turns green when the stack is up.
+**BRAT (beta builds).**
+Install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then **Add beta plugin** → paste `https://github.com/3-Elements-Design/hangarx-obsidian`.
 
-**Bring your own keys.** Click the **LLM provider keys** section to add Gemini, OpenAI, Anthropic, Moonshot, HuggingFace, OpenRouter, or xAI keys. Re-save the YAML and rerun the docker command after changes.
-
-**Fully offline.** Switch the Embedding provider to **Ollama**, run `ollama pull nomic-embed-text`, and the stack uses no cloud APIs at all.
-
-Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/). No source code, no Node.js, no compile step — images are pulled from Docker Hub.
+**Manual.**
+Grab `main.js`, `manifest.json`, `styles.css` from the [latest release](https://github.com/3-Elements-Design/hangarx-obsidian/releases) and drop them in `<your-vault>/.obsidian/plugins/hangarx-obsidian/`. Reload Obsidian, enable in Community Plugins.
 
 </details>
 
 ---
 
-## Connect your AI agents
+## Quick start
 
-The Agents section in settings shows every supported harness as a one-click row:
+### Cloud — 60 seconds
 
-| Agent | Description |
+Best for trying HangarX out. Sign-in is OAuth, no key copy-paste.
+
+1. Settings → **HangarX → Connection** → Mode: **☁️ Cloud (HangarX hosted)**
+2. **Sign in with HangarX** → approve in browser → API key + workspace auto-fill
+3. Command palette (⌘P / Ctrl-P) → **HangarX: Sync**
+4. Open the **Ask your vault** chat in the right sidebar and ask anything
+
+### Local — fully private
+
+Everything runs in Docker on your machine. Notes never leave the laptop.
+
+1. Settings → **HangarX → Connection** → Mode: **🏠 Local (Docker)**
+2. Click **Save Compose to vault** — writes `docker-compose.cortex.yml` next to your notes
+3. In a terminal: `docker compose -f docker-compose.cortex.yml up -d`
+4. Add at least one LLM key in **LLM provider keys** (Gemini, OpenAI, Anthropic, Kimi, HuggingFace, OpenRouter, xAI, or Ollama for fully offline)
+5. Run **HangarX: Sync** from the command palette
+
+> Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/). Images are pulled from Docker Hub (`hangarx/cortex-api`) — no source code or Node.js needed.
+
+---
+
+## How it works
+
+```
+┌──────────────┐       ┌──────────────┐       ┌──────────────────┐
+│  Your vault  │  ──►  │  Cortex API  │  ──►  │ Knowledge graph  │
+│  (markdown)  │       │  (entity     │       │  FalkorDB +      │
+│              │       │  extraction) │       │  pgvector        │
+└──────────────┘       └──────────────┘       └──────────────────┘
+                              ▲                        ▲
+                              │                        │
+                       ┌──────┴────────┐       ┌───────┴────────┐
+                       │ Obsidian      │       │ External agents│
+                       │ chat panel    │       │ (Claude, Cursor│
+                       │ + graph view  │       │  Cline, etc.)  │
+                       └───────────────┘       └────────────────┘
+```
+
+1. **Sync** parses your notes, extracts entities (people, projects, concepts) + relationships, and stores them as a graph alongside vector embeddings.
+2. **Ask** runs multi-hop retrieval (graph traversal + semantic search + reranking) over that graph and an LLM composes the answer with citations.
+3. **MCP bridge** exposes the same retrieval tools to external agents over a local protocol — they query your vault the same way the in-Obsidian chat does.
+
+---
+
+## Connect external agents
+
+Settings → **Agents** shows every supported harness:
+
+| Agent | One-click |
 |---|---|
-| **Claude Desktop** | Anthropic's desktop chat app |
-| **Claude Code** | Anthropic's CLI coding agent |
-| **Cursor** | AI-first code editor |
-| **Cline** | VS Code autonomous coding extension |
-| **Windsurf** | Codeium's agentic IDE |
-| **Other MCP-compatible app** | Copy the JSON snippet for Zed, Goose, Codex CLI, or any custom client |
+| Claude Desktop, Claude Code, Cursor, Cline, Windsurf | ✅ |
+| Zed, Goose, Codex CLI, custom MCP clients | Copy JSON snippet |
 
-Click **Connect** and HangarX merges its MCP server entry into the client's config file (non-destructively — your other MCP servers are preserved). The `⋯` menu lets you copy the config path, reveal it in Finder/Explorer, copy a JSON snippet for hand-merging, or **Disconnect** to cleanly remove the entry.
-
-After connecting: restart the agent and it'll have these tools available:
+Click **Connect** and HangarX merges its MCP server entry into the agent's config (non-destructively — your other MCP servers stay). Restart the agent and it gets these tools:
 
 | Tool | What the agent can do |
 |---|---|
-| `cortex_ask` | Ask a natural-language question against your vault |
-| `cortex_recall` / `cortex_remember` | Persistent memory the agent can store and retrieve across sessions |
-| `cortex_related` | Find notes semantically related to a topic |
-| `cortex_search_entities` | Search by entity name (people, projects, concepts) |
+| `cortex_ask` | Natural-language Q&A against your vault |
+| `cortex_recall` / `cortex_remember` | Persistent memory across agent sessions |
+| `cortex_related` | Find semantically similar notes |
+| `cortex_search_entities` | Search by person / project / concept name |
 | `cortex_paths` | Trace connections between two ideas |
 | `cortex_contradictions` | Find conflicting claims across notes |
-| `cortex_suggest_links` | Get wikilink suggestions for the current note |
-| `cortex_ingest_url` | Pull a URL into the knowledge graph |
+| `cortex_suggest_links` | Wikilink suggestions for the current note |
+| `cortex_ingest_url` | Pull a URL into the graph |
 
 ---
 
-## Inside Obsidian
+## In-Obsidian features
 
-You don't *have* to use external agents. The plugin ships with:
+### Ask your vault
 
-- **Ask your vault** (⌘P) — chat over your knowledge graph with citations back to source notes.
-- **Related notes pane** — sidebar showing semantically similar notes (not just backlinks).
-- **Inline link suggestions** — ghost-text `[[wikilink]]` autocompletes driven by entity matches in your graph; press **Tab** to accept, **Esc** to dismiss.
-- **Memory stats** modal — see how many notes, entities, and relationships are in your graph.
+Right-sidebar chat. Multi-hop retrieval with citations. Click an entity chip to open the source note; click a citation to jump to the exact paragraph.
+
+- **Suggested starters** — Catch me up · Trace connections · Surface decisions · Find blind spots
+- **Auto-highlight on graph** — toggle the pin on any answer to make every future answer auto-push its cited entities into the Graph view filter
+- **Save as note** — drop the answer into `Cortex Chats/`
+- **Conversation history** — sessions persist across restarts
+
+### Sync modal
+
+`HangarX: Sync` — one place, five actions:
+
+| Action | What it does |
+|---|---|
+| **Push** | Vault → graph (changed files only) |
+| **Pull** | Graph → vault (entities + relationships as markdown) |
+| **Two-way** | Push first, then pull |
+| **Diff** | Reconciliation view: vault-only / drifted / graph-only / in-sync |
+| **Force re-ingest** | Wipe local sync index and re-push everything |
+
+Push runs are cancellable mid-flight; cancellation propagates to in-flight server workers.
+
+### Inline link suggestions
+
+Type and HangarX shows ghost-text `[[wikilink]]` autocompletes from your graph. **Tab** to accept, **Esc** to dismiss.
 
 ---
 
-## Privacy & what gets synced
+## Supported LLM providers
 
-- **Cloud mode**: notes are sent to the HangarX hosted API for entity extraction and embedding. They're stored in your scoped workspace and never used to train models. Revoke access anytime from [app.hangarx.ai](https://app.hangarx.ai/settings?tab=api-keys).
-- **Local mode**: nothing leaves your machine. The Docker stack runs FalkorDB (graph), Postgres + pgvector (embeddings), and the Cortex API. You bring an LLM key (or run Ollama for fully offline).
-- **What's excluded by default**: `.cortex/`, `.obsidian/`, `templates/`. Configure include/exclude lists in **What to sync**.
-- **Attachments**: images, PDFs, and other binaries referenced by your notes are ingested by default. Toggle off in **Sync attachments**.
+Pick any in **Settings → HangarX → LLM provider keys** (BYOK) or in the per-request **LLM (runtime)** panel. Switch on the fly — no container restart.
+
+- 🟦 **Google Gemini** — fast, cheap default
+- 🟩 **OpenAI** — GPT-4o, GPT-4.1, o-series
+- 🟧 **Anthropic Claude**
+- ⬛ **xAI Grok**
+- 🟨 **Moonshot Kimi K2.5** — direct
+- 🟪 **HuggingFace Inference** — auto-routes Kimi K2.5, Llama 3.3 70B, Qwen 2.5 72B
+- 🌐 **OpenRouter** — 200+ models behind one key
+- 💻 **Ollama** — fully local (gemma4, llama3.3, qwen2.5, mistral, phi3, …)
+
+---
+
+## Privacy
+
+| | Cloud | Local |
+|---|---|---|
+| Notes leave your machine | ✓ (sent to HangarX API) | ✗ |
+| LLM key required | ✗ (we manage) | ✓ (BYOK) |
+| Trained on your data | ✗ | ✗ |
+| Revocable | ✓ ([dashboard](https://app.hangarx.ai/settings?tab=api-keys)) | ✓ (delete the container) |
+
+**Excluded by default**: `.cortex/`, `.obsidian/`, `templates/`. Configurable in **What to sync**.
+**Attachments**: images, PDFs, and other binaries are ingested by default. Toggle off in **Sync attachments**.
 
 ---
 
@@ -112,49 +195,87 @@ You don't *have* to use external agents. The plugin ships with:
 
 | Command | Description |
 |---|---|
-| `HangarX: Sync vault to memory layer` | Push changed files to the graph |
-| `HangarX: Force re-ingest entire vault` | Re-sync everything (use after a server reset) |
-| `HangarX: Connect agents (Claude, Cursor)…` | Jump to the Agents settings panel |
-| `HangarX: Memory stats` | Show graph + memory counts |
 | `HangarX: Ask your vault` | Open the Q&A chat |
-| `HangarX: Ingest URL into knowledge graph` | Scrape a URL and add it to memory |
+| `HangarX: Sync` | Open the multi-purpose sync modal |
+| `HangarX: Sync current note` | Push only the active file |
+| `HangarX: Diff vault vs knowledge graph` | Open the 4-bucket diff view |
+| `HangarX: Pull graph entities into vault` | Materialize entities as markdown |
+| `HangarX: Force re-ingest entire vault` | Re-sync everything |
+| `HangarX: Connect agents (Claude, Cursor)…` | Jump to the Agents settings panel |
+| `HangarX: Knowledge graph stats` | Show graph + memory counts |
+| `HangarX: Ingest URL into knowledge graph` | Scrape a URL and add it to the graph |
+| `HangarX: Show onboarding` | Reopen the first-run walkthrough |
 
 ---
 
 ## Troubleshooting
 
-**"This API key was rejected (401)" in Cloud mode.**
-Generate a fresh key in the [dashboard](https://app.hangarx.ai/settings?tab=api-keys) and click Test on the API Key field. If you signed in via OAuth, click **Sign out** then **Sign in with HangarX** again.
+<details>
+<summary><strong>"This API key was rejected (401)" in Cloud mode</strong></summary>
 
-**Local stack: "Cannot reach http://localhost:3400".**
-Make sure Docker Desktop is running and `docker compose ps` shows the `cortex-api` container as healthy. Check `docker compose logs cortex-api` for startup errors. The most common cause is a missing LLM key — confirm `GEMINI_API_KEY` (or whichever provider) is set when you ran `up -d`.
+Generate a fresh key in the [dashboard](https://app.hangarx.ai/settings?tab=api-keys) and click **Test** on the API Key field. If you signed in via OAuth, **Sign out** then **Sign in with HangarX** again.
 
-**Local stack: embedding dimension mismatch.**
-You changed embedding providers and the existing chunks were embedded with a different model. Run `HangarX: Force re-ingest entire vault` after recreating the container, or wipe the local Postgres volume.
+</details>
 
-**Agent shows "Connected" but doesn't see HangarX tools.**
-Restart the agent fully — Claude Desktop, Cursor, and Windsurf cache MCP servers and only re-read the config on launch. For Claude Code, start a new session.
+<details>
+<summary><strong>"LLM provider API key expired"</strong></summary>
 
-**Sync is slow.**
-Initial syncs are O(notes × LLM latency). Cloud mode uses our infrastructure; local mode is bound by your LLM provider's throughput. Switch the embedding provider to Ollama for faster, free local embeddings.
+The chat error card surfaces this directly. Open **Settings → HangarX → LLM provider keys**, paste a fresh key in the relevant section. Runtime config updates immediately — no container restart.
+
+</details>
+
+<details>
+<summary><strong>HuggingFace 403</strong></summary>
+
+Visit [huggingface.co/settings/inference-providers](https://huggingface.co/settings/inference-providers) and confirm your token has provider access. Paid models (Kimi K2.5 via Novita, Llama 3.3 via Fireworks) need credits — switch to a free serverless model in the runtime panel if not.
+
+</details>
+
+<details>
+<summary><strong>Local stack: "Cannot reach http://localhost:3400"</strong></summary>
+
+Make sure Docker Desktop is running and `docker compose ps` shows `cortex-api` as healthy. Check `docker compose logs cortex-api` for startup errors. The most common cause is a missing LLM key — re-save the Compose YAML from settings (it bakes in whichever BYOK keys you've configured) and `docker compose up -d --force-recreate`.
+
+</details>
+
+<details>
+<summary><strong>Local stack: embedding dimension mismatch</strong></summary>
+
+You changed embedding providers and existing chunks were embedded with a different model. Run **HangarX: Force re-ingest entire vault**, or wipe the local Postgres volume.
+
+</details>
+
+<details>
+<summary><strong>Agent shows "Connected" but doesn't see HangarX tools</strong></summary>
+
+Restart the agent fully. Claude Desktop, Cursor, and Windsurf cache MCP servers and only re-read the config on launch. For Claude Code, start a new session.
+
+</details>
+
+<details>
+<summary><strong>"Show on graph" doesn't dim nodes</strong></summary>
+
+Make sure you've synced your vault at least once — dimming requires the cited entities to exist as files. If the graph view was previously corrupted by an older plugin version, the plugin auto-detaches and recreates the leaf — reload Obsidian once.
+
+</details>
+
+<details>
+<summary><strong>Sync is slow</strong></summary>
+
+Initial syncs are bound by LLM latency (`O(notes × LLM round-trip)`). Cloud uses our infrastructure; local is bound by your provider. Switch the embedding provider to Ollama for free, fast local embeddings.
+
+</details>
 
 ---
 
-## Architecture & internals
+## Architecture
 
-For the technical deep-dive — how entity extraction, multi-hop retrieval, claim graphs, and the MCP bridge actually work — see [`docs/HOW_IT_WORKS.md`](./docs/HOW_IT_WORKS.md).
+For the deep-dive on how entity extraction, multi-hop retrieval, claim graphs, and the MCP bridge actually work, see [`docs/HOW_IT_WORKS.md`](./docs/HOW_IT_WORKS.md).
 
----
+## Contributing
 
-## Links
-
-- **Dashboard**: [app.hangarx.ai](https://app.hangarx.ai)
-- **Marketing site**: [hangarx.ai](https://www.hangarx.ai)
-- **Issues / feedback**: open an issue in the [HangarX repo](https://github.com/3-Elements-Design/hangarx-knowledge-graph)
-- **Built by**: [HangarX](https://www.hangarx.ai)
-
----
+Issues and PRs welcome at [github.com/3-Elements-Design/hangarx-obsidian](https://github.com/3-Elements-Design/hangarx-obsidian).
 
 ## License
 
-MIT.
+MIT — see [LICENSE](./LICENSE).
