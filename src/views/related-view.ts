@@ -21,7 +21,7 @@ export class RelatedView extends ItemView {
     container.empty();
     container.addClass('cortex-related-container');
     container.createEl('h4', { text: 'Related notes' });
-    this.listEl = container.createEl('div', { cls: 'cortex-related-list' });
+    this.listEl = container.createDiv({ cls: 'cortex-related-list' });
 
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => this.refresh()),
@@ -65,9 +65,9 @@ export class RelatedView extends ItemView {
 
   private renderResult(r: RelatedNote): void {
     if (!this.listEl) return;
-    const row = this.listEl.createEl('div', { cls: 'cortex-related-row' });
+    const row = this.listEl.createDiv({ cls: 'cortex-related-row' });
 
-    const header = row.createEl('div', { cls: 'cortex-related-header' });
+    const header = row.createDiv({ cls: 'cortex-related-header' });
     const link = header.createEl('a', {
       text: r.noteName,
       cls: `cortex-related-link cortex-source-${r.source}`,
@@ -75,57 +75,57 @@ export class RelatedView extends ItemView {
     link.addEventListener('click', evt => {
       evt.preventDefault();
       const target = this.app.metadataCache.getFirstLinkpathDest(r.noteName, '');
-      if (target) this.app.workspace.getLeaf(false).openFile(target);
+      if (target) void this.app.workspace.getLeaf(false).openFile(target);
     });
 
-    const sourceBadge = header.createEl('span', {
+    const sourceBadge = header.createSpan({
       text: r.source,
       cls: `cortex-related-badge cortex-source-${r.source}`,
     });
     sourceBadge.setAttr('title', `Match source: ${r.source}`);
 
-    const score = header.createEl('span', { text: r.score.toFixed(2), cls: 'cortex-related-score' });
+    const score = header.createSpan({ text: r.score.toFixed(2), cls: 'cortex-related-score' });
     score.setAttr('title', 'Relevance score');
 
     if (r.snippet) row.createEl('p', { text: r.snippet, cls: 'cortex-snippet' });
 
     if (r.entityId) {
       const whyBtn = row.createEl('button', { cls: 'cortex-why-btn' });
-      const icon = whyBtn.createEl('span', { cls: 'cortex-why-icon' });
+      const icon = whyBtn.createSpan({ cls: 'cortex-why-icon' });
       setIcon(icon, 'route');
-      whyBtn.createEl('span', { text: 'Why are these related?' });
-      const pathEl = row.createEl('div', { cls: 'cortex-paths', attr: { 'aria-hidden': 'true' } });
-      pathEl.style.display = 'none';
+      whyBtn.createSpan({ text: 'Why are these related?' });
+      const pathEl = row.createDiv({ cls: 'cortex-paths', attr: { 'aria-hidden': 'true' } });
+      pathEl.addClass('is-hidden');
 
-      whyBtn.addEventListener('click', () => this.togglePath(r, whyBtn, pathEl));
+      whyBtn.addEventListener('click', () => { void this.togglePath(r, whyBtn, pathEl); });
     }
   }
 
   private async togglePath(r: RelatedNote, btn: HTMLButtonElement, pathEl: HTMLElement): Promise<void> {
-    const isOpen = pathEl.style.display !== 'none';
+    const isOpen = !pathEl.classList.contains('is-hidden');
     if (isOpen) {
-      pathEl.style.display = 'none';
+      pathEl.addClass('is-hidden');
       pathEl.setAttr('aria-hidden', 'true');
       return;
     }
-    pathEl.style.display = '';
+    pathEl.removeClass('is-hidden');
     pathEl.setAttr('aria-hidden', 'false');
 
     if (pathEl.dataset.loaded === '1') return;
     pathEl.empty();
-    pathEl.createEl('span', { text: 'Tracing graph paths…', cls: 'cortex-loading' });
+    pathEl.createSpan({ text: 'Tracing graph paths…', cls: 'cortex-loading' });
 
     try {
       const sourceId = await this.resolveSelfEntityId();
       if (!sourceId || !r.entityId) {
         pathEl.empty();
-        pathEl.createEl('span', { text: 'Cannot resolve graph anchor for this note.', cls: 'cortex-error' });
+        pathEl.createSpan({ text: 'Cannot resolve graph anchor for this note.', cls: 'cortex-error' });
         return;
       }
       const paths = await this.client.findPaths(sourceId, r.entityId, 4);
       pathEl.empty();
       if (paths.length === 0) {
-        pathEl.createEl('span', { text: 'No direct path found in the graph.', cls: 'cortex-empty-state' });
+        pathEl.createSpan({ text: 'No direct path found in the graph.', cls: 'cortex-empty-state' });
       } else {
         for (const p of paths.slice(0, 3)) this.renderPath(pathEl, p);
       }
@@ -133,21 +133,21 @@ export class RelatedView extends ItemView {
       btn.addClass('is-open');
     } catch (e) {
       pathEl.empty();
-      pathEl.createEl('span', { text: `Error: ${(e as Error).message}`, cls: 'cortex-error' });
+      pathEl.createSpan({ text: `Error: ${(e as Error).message}`, cls: 'cortex-error' });
     }
   }
 
   private renderPath(parent: HTMLElement, path: GraphPath): void {
-    const wrap = parent.createEl('div', { cls: 'cortex-path' });
+    const wrap = parent.createDiv({ cls: 'cortex-path' });
     if (path.steps.length === 0) {
-      wrap.createEl('span', { text: 'Direct match.', cls: 'cortex-empty-state' });
+      wrap.createSpan({ text: 'Direct match.', cls: 'cortex-empty-state' });
       return;
     }
     // Render: [Node] —REL→ [Node] —REL→ [Node]
-    wrap.createEl('span', { text: path.steps[0].fromName, cls: 'cortex-path-node' });
+    wrap.createSpan({ text: path.steps[0].fromName, cls: 'cortex-path-node' });
     for (const s of path.steps) {
-      wrap.createEl('span', { text: ` —${humanRel(s.relType)}→ `, cls: 'cortex-path-rel' });
-      wrap.createEl('span', { text: s.toName, cls: 'cortex-path-node' });
+      wrap.createSpan({ text: ` —${humanRel(s.relType)}→ `, cls: 'cortex-path-rel' });
+      wrap.createSpan({ text: s.toName, cls: 'cortex-path-node' });
     }
   }
 

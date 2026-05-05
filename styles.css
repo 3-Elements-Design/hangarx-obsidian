@@ -1,5 +1,74 @@
 /* Cortex GraphRAG — Obsidian plugin styles */
 
+/* Replaces inline `element.style.display = 'none'` patterns. Apply via
+   addClass('is-hidden') / removeClass('is-hidden'). Required by the
+   obsidianmd/no-static-styles-assignment rule. */
+.is-hidden {
+  display: none !important;
+}
+
+/* Progress-bar fill driven by --cortex-progress-pct (set via
+   `setCssProps({ '--cortex-progress-pct': '47%' })`). Replaces inline
+   `bar.style.width = '${pct}%'` assignments which the obsidianmd ESLint
+   plugin flags. */
+.cortex-progress-bar-fill {
+  width: var(--cortex-progress-pct, 0%);
+}
+
+/* Prompt-modal input + button. Replaces inline `style: 'width:100%; ...'`
+   strings on the createEl `attr` object. */
+.cortex-prompt-input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.cortex-prompt-button {
+  width: 100%;
+}
+
+/* Settings-tab description blocks. Replaces three different inline
+   style strings (heading, body, footnote) on createEl `attr.style`. */
+.cortex-settings-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: var(--text-normal);
+}
+.cortex-settings-card-body {
+  font-size: 13px;
+  color: var(--text-normal);
+  opacity: 0.85;
+}
+.cortex-settings-card-footnote {
+  font-size: 13px;
+  color: var(--text-normal);
+  opacity: 0.7;
+  margin-top: 6px;
+}
+
+/* File input that's used as a hidden picker (the chat-panel attachment
+   uploader clicks it programmatically). */
+.cortex-hidden-file-input {
+  display: none;
+}
+
+/* Cursor affordance for clickable Notice cards (e.g. the "rebuild now"
+   nudge that fires after a force-resync). Replaces inline style.cursor. */
+.cortex-clickable-notice {
+  cursor: pointer;
+}
+
+/* Success card used inside the settings panel to confirm key actions
+   completed successfully. Replaces a block of inline style.* assignments. */
+.cortex-success-card {
+  margin: 8px 0 16px;
+  padding: 14px 16px;
+  border-left: 3px solid #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+  border-radius: 4px;
+  color: var(--text-normal);
+}
+
 /* ──────────────────────────────────────────
    Chat modal — shell
    ────────────────────────────────────────── */
@@ -189,17 +258,25 @@
   justify-content: center;
   width: 24px;
   height: 24px;
+  padding: 0;
   border-radius: 4px;
   background: transparent;
   border: none;
-  color: var(--text-faint);
+  color: var(--text-normal);
   cursor: pointer;
   opacity: 0;
   transition: opacity 80ms ease, color 80ms ease;
+  /* Unicode wastebasket glyph: explicit font-size + line-height so it
+     renders predictably across themes regardless of inherited button
+     defaults that may set font-size:0 (the most common cause of
+     "icon invisible" bugs in Obsidian custom panels). */
+  font-size: 14px;
+  line-height: 1;
+  font-family: -apple-system, "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif;
 }
 .cortex-chat-history-row:hover .cortex-chat-history-del { opacity: 1; }
 .cortex-chat-history-del:hover { color: var(--text-error); background: var(--background-modifier-hover); }
-.cortex-chat-history-del .svg-icon { width: 13px; height: 13px; }
+/* No .svg-icon override needed — button uses a Unicode glyph instead. */
 
 /* Output (scroll) area. Force text selection back on — Obsidian's
    workspace-leaf-content sets `user-select: none` on side-panel views to
@@ -276,6 +353,59 @@
   max-width: 460px;
 }
 
+.cortex-chat-suggestion-section {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 560px;
+  margin: 4px auto 8px;
+}
+.cortex-chat-suggestion-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.cortex-chat-suggestions-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+  margin: 12px auto 0;
+}
+.cortex-chat-suggestions-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 80ms ease;
+}
+.cortex-chat-suggestions-toggle:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+.cortex-chat-suggestions-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.cortex-chat-suggestions-secondary {
+  /* Slightly muted styling so the secondary tier reads as background */
+  opacity: 0.92;
+}
+.cortex-chat-suggestions-secondary .cortex-chat-suggestion {
+  padding: 10px;
+  background: var(--background-primary-alt);
+}
 .cortex-chat-suggestions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -411,24 +541,144 @@
 /* Markdown answer */
 .cortex-chat-answer {
   font-size: var(--font-text-size);
-  line-height: 1.55;
+  line-height: 1.6;
+  text-align: left;
 }
 .cortex-chat-answer > :first-child { margin-top: 0; }
 .cortex-chat-answer > :last-child { margin-bottom: 0; }
-.cortex-chat-answer p { margin: 0 0 8px; }
-.cortex-chat-answer ul, .cortex-chat-answer ol { margin: 0 0 8px; padding-left: 22px; }
-.cortex-chat-answer h1, .cortex-chat-answer h2, .cortex-chat-answer h3 { margin: 12px 0 6px; }
+.cortex-chat-answer p { margin: 0 0 10px; }
+
+/* Headers — always left-aligned with consistent vertical rhythm. The
+   first header in an answer hugs the top; subsequent ones get a little
+   air to separate sections visually. */
+.cortex-chat-answer h1,
+.cortex-chat-answer h2,
+.cortex-chat-answer h3,
+.cortex-chat-answer h4,
+.cortex-chat-answer h5,
+.cortex-chat-answer h6 {
+  text-align: left !important;
+  margin: 18px 0 8px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text-normal);
+  letter-spacing: -0.005em;
+}
+.cortex-chat-answer h1 { font-size: 1.4em; padding-bottom: 4px; border-bottom: 1px solid var(--background-modifier-border); }
+.cortex-chat-answer h2 { font-size: 1.2em; }
+.cortex-chat-answer h3 { font-size: 1.05em; }
+.cortex-chat-answer h4 { font-size: 1em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.cortex-chat-answer > h1:first-child,
+.cortex-chat-answer > h2:first-child,
+.cortex-chat-answer > h3:first-child { margin-top: 4px; }
+
+/* Lists — nested bullets get visual depth via indent + smaller marker color. */
+.cortex-chat-answer ul,
+.cortex-chat-answer ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.cortex-chat-answer li { margin-bottom: 4px; }
+.cortex-chat-answer li > p { margin: 0 0 4px; }
+.cortex-chat-answer ul ul,
+.cortex-chat-answer ol ol,
+.cortex-chat-answer ul ol,
+.cortex-chat-answer ol ul {
+  margin: 4px 0;
+}
+
+/* Blockquotes — subtle left bar so quoted material reads as set-aside. */
+.cortex-chat-answer blockquote {
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border-left: 3px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Inline code + code blocks. */
 .cortex-chat-answer code {
   background: var(--code-background);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.9em;
+  font-family: var(--font-monospace);
 }
 .cortex-chat-answer pre {
   background: var(--code-background);
-  padding: 10px;
+  padding: 10px 12px;
   border-radius: 6px;
   overflow-x: auto;
+  margin: 0 0 10px;
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-chat-answer pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+/* Tables — proper grid with sticky-feeling header, zebra rows, balanced
+   column widths. Replaces Obsidian's default centered/awkward look in
+   narrow chat panels. */
+.cortex-chat-answer table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0 12px;
+  font-size: 0.95em;
+  display: block;
+  overflow-x: auto;
+}
+.cortex-chat-answer table thead {
+  background: var(--background-secondary);
+}
+.cortex-chat-answer table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  white-space: nowrap;
+}
+.cortex-chat-answer table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+  line-height: 1.5;
+}
+.cortex-chat-answer table tr:last-child td { border-bottom: 0; }
+.cortex-chat-answer table tr:nth-child(even) td {
+  background: rgba(127, 127, 127, 0.04);
+}
+
+/* Horizontal rules — used by some assistant outputs as section dividers. */
+.cortex-chat-answer hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Links — already get an underline by default; adjust for in-chat density. */
+.cortex-chat-answer a {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(127, 127, 127, 0.35);
+  text-underline-offset: 2px;
+}
+.cortex-chat-answer a:hover {
+  text-decoration-color: var(--interactive-accent);
+}
+
+/* Images — keep them constrained to the chat width and rounded for polish. */
+.cortex-chat-answer img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 4px 0;
 }
 
 /* Meta row (confidence pill, etc.) */
@@ -647,7 +897,7 @@
  * elements default to `white-space: nowrap`; explicit override required. */
 .cortex-chat-followup-list { display: flex; flex-direction: column; gap: 4px; }
 .cortex-chat-followup {
-  text-align: left;
+  text-align: center;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -672,9 +922,16 @@
    Composer (pinned to bottom)
    ────────────────────────────────────────── */
 .cortex-chat-composer-wrap {
-  border-top: 1px solid var(--background-modifier-border);
-  padding: 12px 18px 14px;
+  /* Outer card around the input pill + helper-hint row. The 16px radius
+     is intentionally larger than the inner composer's 14px so the inner
+     pill reads as nested rather than concentric. The 8px bottom/side
+     gutter lets the rounding actually show — without it the wrap would
+     glue to the panel edge and the radius would clip flat. */
+  margin: 8px 8px 6px;
+  padding: 10px 12px 8px;
   background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -945,8 +1202,11 @@
 .cortex-chat-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  justify-content: center;
+  gap: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -959,7 +1219,174 @@
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-.cortex-chat-action-btn .svg-icon { width: 12px; height: 12px; }
+.cortex-chat-action-btn .svg-icon { width: 14px; height: 14px; }
+/* Hide text labels — buttons are icon-only by default. Hover reveals
+   the full label via the existing `title`/`aria-label` attributes. */
+.cortex-chat-action-btn > span:not([class*="-icon"]) {
+  display: none;
+}
+/* The stateful Auto-toggle keeps its text since "Auto: on" / "Auto: off"
+   carries information the icon alone can't convey. */
+.cortex-chat-action-btn.cortex-chat-action-toggle {
+  width: auto;
+  padding: 3px 8px;
+  gap: 4px;
+}
+.cortex-chat-action-btn.cortex-chat-action-toggle > span:not([class*="-icon"]) {
+  display: inline;
+}
+
+/* Agent-mode tool-call trace — collapsible per-call cards rendered above
+   the answer when chatAgentMode is 'agent'. */
+.cortex-chat-toolcalls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.cortex-chat-toolcall {
+  position: relative;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font-size: 12px;
+  transition: background-color 120ms ease;
+}
+.cortex-chat-toolcall summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  /* Single-line summary at every breakpoint — tool-call rows are scanned
+     vertically so wrapping makes the trace harder to read, not easier. */
+  white-space: nowrap;
+}
+.cortex-chat-toolcall summary::-webkit-details-marker { display: none; }
+.cortex-chat-toolcall-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.cortex-chat-toolcall-icon .svg-icon { width: 12px; height: 12px; }
+.cortex-chat-toolcall-name {
+  color: var(--text-normal);
+  font-weight: 500;
+  /* Fixed-width name column so the args column starts at the same x-offset
+     across every row — gives the trace a tabular feel. */
+  flex: 0 0 auto;
+  min-width: 8.5em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cortex-chat-toolcall-args {
+  color: var(--text-muted);
+  font-style: italic;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cortex-chat-toolcall-meta {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  /* Right-aligned metric column with a fixed minimum so durations line up */
+  text-align: right;
+  min-width: 4.5em;
+}
+
+/* State-aware styling. Run state communicated via the meta-cell text
+   color + a subtle background tint — no colored left bar, keeps the
+   trace visually clean. */
+.cortex-chat-toolcall.is-running {
+  background: color-mix(in srgb, var(--interactive-accent) 5%, var(--background-secondary));
+  animation: cortex-toolcall-pulse 1.4s ease-in-out infinite;
+}
+.cortex-chat-toolcall.is-running .cortex-chat-toolcall-meta {
+  color: var(--interactive-accent);
+  font-style: italic;
+}
+.cortex-chat-toolcall.is-slow .cortex-chat-toolcall-meta {
+  color: var(--text-warning, #d29922);
+}
+.cortex-chat-toolcall.is-error {
+  background: color-mix(in srgb, var(--text-error, #f85149) 6%, var(--background-secondary));
+}
+.cortex-chat-toolcall.is-error .cortex-chat-toolcall-meta {
+  color: var(--text-error, #f85149);
+}
+
+@keyframes cortex-toolcall-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.78; }
+}
+
+/* Grouped tool-call rows — rendered when ≥2 consecutive calls share a name.
+   The group has a single header showing "Searched vault × 3 — 32.0s" and
+   the per-call rows are slightly indented underneath. */
+.cortex-chat-toolcall-group {
+  border: 1px solid var(--background-modifier-border);
+  border-left: 2px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font-size: 12px;
+  overflow: hidden;
+}
+.cortex-chat-toolcall-group.is-slow  { border-left-color: var(--text-warning, #d29922); }
+.cortex-chat-toolcall-group.is-error { border-left-color: var(--text-error, #f85149); }
+.cortex-chat-toolcall-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--background-modifier-border) 25%, transparent);
+  white-space: nowrap;
+}
+.cortex-chat-toolcall-group-header .cortex-chat-toolcall-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cortex-chat-toolcall-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 6px 6px 22px;
+}
+.cortex-chat-toolcall.is-grouped-child {
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-left: 2px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+}
+.cortex-chat-toolcall.is-grouped-child summary {
+  padding: 4px 8px;
+}
+.cortex-chat-toolcall.is-grouped-child:hover {
+  background: var(--background-modifier-hover);
+}
+.cortex-chat-toolcall.is-grouped-child.is-slow {
+  border-left-color: var(--text-warning, #d29922);
+}
+.cortex-chat-toolcall.is-grouped-child.is-error {
+  border-left-color: var(--text-error, #f85149);
+}
+.cortex-chat-toolcall-body {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 8px 10px;
+}
+.cortex-chat-toolcall-body pre {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
 
 /* Pin/auto toggle — surfaces persistent state inline rather than burying
    it in settings. Filled accent background when on. */
@@ -986,14 +1413,41 @@
   text-decoration: none;
 }
 
-/* Improved thinking animation (bouncing dots) */
+/* Phase indicator while the agent is working. Two layers:
+   1. The text itself fades + slides slightly when it changes phase
+      (cortex-thinking-fade), so phase transitions read as movement
+      rather than a jolt.
+   2. A diagonal sheen sweeps across the text continuously
+      (cortex-thinking-sheen), giving the whole label the same
+      "shimmer" feel as a skeleton loader. The sheen rides on a
+      background-clip:text gradient so it works on any theme. */
 .cortex-chat-thinking {
   color: var(--text-muted);
   font-style: italic;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  position: relative;
+  background: linear-gradient(
+    100deg,
+    var(--text-muted) 30%,
+    var(--text-normal) 50%,
+    var(--text-muted) 70%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: cortex-thinking-sheen 2.4s linear infinite;
 }
+@keyframes cortex-thinking-sheen {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
+}
+/* Trailing dots — kept as before, but rendered as solid muted text so
+   the sheen gradient doesn't sweep through them (would be visually
+   noisy alongside the moving label). */
 .cortex-chat-thinking::after {
   content: '···';
   letter-spacing: 2px;
@@ -1001,6 +1455,9 @@
   width: 20px;
   overflow: hidden;
   display: inline-block;
+  background: none;
+  -webkit-text-fill-color: var(--text-muted);
+  color: var(--text-muted);
 }
 @keyframes cortex-dots {
   0%   { width: 0; }
@@ -1009,6 +1466,42 @@
   75%  { width: 20px; }
   100% { width: 0; }
 }
+/* Brief fade when the phase label switches — applied via JS by toggling
+   .is-changing for ~120ms around setText(). */
+.cortex-chat-thinking.is-changing { opacity: 0.35; transform: translateY(1px); }
+.cortex-chat-thinking { transition: opacity 140ms ease, transform 140ms ease; }
+
+/* Thinking-pill row: just the phase label. Wrapper kept so the cleanup
+   code (which removes the row, not the pill) stays unchanged across
+   the streaming + non-streaming branches. */
+.cortex-chat-thinking-row {
+  display: flex;
+  align-items: center;
+}
+
+/* Empty-answer placeholder. Surfaces the harness stop reason so users
+   know WHY the agent didn't produce a final answer (max-iterations,
+   max-tool-calls, budget-exceeded, etc.) instead of staring at a
+   blank space. */
+.cortex-chat-empty-answer {
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+}
+.cortex-chat-empty-answer-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-warning, #d29200);
+  margin-bottom: 4px;
+}
+.cortex-chat-empty-answer-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.cortex-chat-empty-answer-hint:last-child { margin-bottom: 0; }
 
 /* ──────────────────────────────────────────
    Contradictions view
@@ -2812,9 +3305,13 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   padding: 12px;
 }
 .cortex-chat-view-body .cortex-chat-composer-wrap {
+  /* Side-panel variant — keep the rounded card from the base rule but
+     tighten the gutters since the panel is narrow. The base border +
+     border-radius are inherited; do NOT re-apply border-top here, that
+     would re-flatten the top corners. */
   flex: 0 0 auto;
-  padding: 8px 10px 10px;
-  border-top: 1px solid var(--background-modifier-border);
+  margin: 6px 6px 8px;
+  padding: 8px 10px 8px;
 }
 /* Empty-state suggestions stack vertically in narrow side panel. */
 .cortex-chat-view-body .cortex-chat-suggestions {
@@ -3405,6 +3902,85 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   font-size: 12px;
   color: var(--text-muted);
 }
+.cortex-graph-stats-empty-card {
+  padding: 16px 18px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+.cortex-graph-stats-empty-card .cortex-graph-stats-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 4px;
+}
+.cortex-graph-stats-empty-card .cortex-graph-stats-empty-body {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Per-vault scope surface in the Local Mode card. Lets users see which
+   vaultId the local cortex-api is namespacing this vault under. */
+.cortex-local-vault-scope {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--background-modifier-border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cortex-local-vault-scope-label { color: var(--text-muted); }
+.cortex-local-vault-scope-id {
+  font-family: var(--font-monospace);
+  background: var(--background-modifier-hover);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--text-normal);
+}
+.cortex-local-vault-scope-hint {
+  margin-top: 6px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.cortex-local-vault-scope-reset {
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cortex-local-vault-scope-reset:hover {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
+
+/* Per-iteration timing chips in the live agent trace. Surface where
+   each LLM round-trip went so users can identify slow stages. */
+.cortex-chat-iter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 1px 8px;
+  margin: 4px 0 2px;
+  font-size: 10px;
+  font-family: var(--font-monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.cortex-chat-iter-chip.is-running {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+  animation: cortex-toolcall-pulse 1.4s ease-in-out infinite;
+}
 .cortex-graph-stats-error {
   font-size: 12px;
   color: var(--text-error, #e53e3e);
@@ -3720,4 +4296,1072 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   color: var(--text-faint);
   text-align: center;
   margin-top: 6px;
+}
+
+/* L7/L9 — agent-run metadata strip + live streaming-trace styling.
+   Renders just below the tool-call cards when the harness returned a
+   runId or per-iteration tokens. */
+.cortex-chat-toolcalls-live {
+  border-left: 2px solid var(--interactive-accent);
+  padding-left: 6px;
+  margin-bottom: 8px;
+}
+.cortex-chat-answer-streaming {
+  white-space: pre-wrap;
+  font-size: 13px;
+  color: var(--text-normal);
+  margin-bottom: 8px;
+}
+.cortex-chat-agent-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cortex-chat-agent-chip {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cortex-chat-agent-chip-warn {
+  border-color: var(--text-warning);
+  color: var(--text-warning);
+}
+.cortex-chat-agent-link {
+  margin-left: auto;
+  color: var(--text-accent);
+  text-decoration: none;
+}
+.cortex-chat-agent-link:hover { text-decoration: underline; }
+
+/* L6 sub-runs — nested cards rendered inside the parent delegate
+   tool-call card. Indented + accent-bordered to make the parent/child
+   relationship immediately legible. */
+.cortex-chat-subrun-host {
+  margin: 6px 0 0 12px;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+.cortex-chat-subrun {
+  border-left: 2px solid var(--interactive-accent) !important;
+}
+.cortex-chat-subrun-body {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.cortex-chat-subrun-answer {
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  margin-bottom: 4px;
+}
+
+/* Settings IA Milestone 1 — section header layout. The h3 sits above
+   a muted preview line that summarizes the section's current state
+   (e.g. "Cloud · signed in · ws_abc123") so users get status at a
+   glance without having to expand controls. Top margin is generous
+   so each section reads as its own visual block. */
+.cortex-section-header {
+  margin: 22px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cortex-section-header h3 {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+}
+.cortex-section-preview {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* Sub-heading inside a section ("Runtime LLM (advanced)" etc.) — keep
+   the visual weight clearly below the h3 but above plain settings. */
+.cortex-section-subhead {
+  margin: 14px 0 4px;
+  font-size: 0.95em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* Settings IA Milestone 2/3 ────────────────────────────────────────── */
+
+/* Search bar at the top of the page. Hides non-matching .setting-item
+   elements live as the user types. */
+.cortex-settings-search {
+  margin: 4px 0 12px;
+}
+.cortex-settings-search-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-normal);
+}
+.cortex-settings-search-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* Common-tasks entry-point row. Sits just below the search bar so
+   onboarding-skipped users have a clear next step. */
+.cortex-common-tasks {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+  border-radius: 10px;
+  border: 1px solid var(--background-modifier-border);
+}
+.cortex-common-tasks-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.cortex-common-tasks-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cortex-common-tasks-btn {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 100ms ease, background 100ms ease;
+}
+.cortex-common-tasks-btn:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+/* Section title row + status dot ("✅ / ⚠ / ✗" before the title). */
+.cortex-section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Match the heading's visual height — line-height 1 collapses the
+     row to the glyph height so flex-center aligns the dot to the
+     cap-height middle instead of the line-box middle. */
+  line-height: 1;
+}
+.cortex-section-title-text {
+  /* Match Obsidian's native h3 styling without using an h3 element —
+     gives us full control over the vertical metrics for dot alignment. */
+  font-size: var(--font-ui-medium, 14px);
+  font-weight: 600;
+  color: var(--text-normal);
+  line-height: 1;
+  /* No padding / margin so the flex-center math is predictable. */
+}
+.cortex-section-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.cortex-section-dot.is-ok    { background: var(--text-success, #2eb872); }
+.cortex-section-dot.is-warn  { background: var(--text-warning, #d29200); }
+.cortex-section-dot.is-error { background: var(--text-error,   #d04545); }
+
+/* Brief flash highlight when a Common-tasks button scrolls a section
+   into view — helps the eye land on the right place. */
+.cortex-section-header.is-flash {
+  animation: cortex-section-flash 1.2s ease-out;
+}
+@keyframes cortex-section-flash {
+  0%   { background: var(--interactive-accent-translucent, rgba(120,120,200,0.18)); }
+  100% { background: transparent; }
+}
+
+/* Advanced disclosure block — collapsed by default, opens on click.
+   Bordered + indented so it reads as one cohesive sub-block, not three
+   loose settings hanging off the section. */
+.cortex-advanced {
+  margin: 8px 0 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+.cortex-advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  list-style: none;
+}
+.cortex-advanced-summary::-webkit-details-marker { display: none; }
+.cortex-advanced-chevron {
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.cortex-advanced[open] .cortex-advanced-chevron { transform: rotate(90deg); }
+.cortex-advanced-label {
+  font-weight: 500;
+  color: var(--text-normal);
+  font-size: 12px;
+}
+.cortex-advanced-body {
+  padding: 4px 12px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cortex-advanced[open] .cortex-advanced-body {
+  display: block;
+}
+
+/* "beta" pill — small inline tag next to a setting name. */
+.cortex-beta-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--text-warning, #d29200);
+  color: var(--background-primary);
+  border-radius: 999px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* Inline dependency hint — surfaced under a setting whose runtime
+   behavior depends on something the plugin can't verify (e.g. a
+   server-side env var). */
+.cortex-dep-hint {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  background: var(--background-modifier-border);
+  border-left: 3px solid var(--text-warning, #d29200);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Role pill — informational metadata next to a setting name
+   ("default ok", "auto", "ignored in local mode"). Lighter visual
+   weight than .cortex-beta-pill (neutral muted color) so it reads as
+   "here's what this field's role is" rather than a status warning. */
+.cortex-role-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  border-radius: 999px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* Masked-key display — the read-only one-liner that replaces the
+   editable API-key input in local mode. Monospace so the prefix +
+   suffix line up cleanly. */
+.cortex-key-masked {
+  font-family: var(--font-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* ── Persistent onboarding side-panel ──────────────────────────────── */
+
+.cortex-onboarding-view {
+  padding: 12px;
+}
+
+.cortex-onboarding-view-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cortex-onboarding-view-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cortex-onboarding-view-logo {
+  width: 28px;
+  height: 28px;
+}
+
+.cortex-onboarding-view-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.cortex-onboarding-view-tagline {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.cortex-onboarding-view-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.cortex-onboarding-view-progress-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #a78bfa, #38bdf8);
+  transition: width 200ms ease-out;
+  min-width: 0;
+}
+
+.cortex-onboarding-view-progress-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cortex-onboarding-view-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Smart prompt buttons (step 3) */
+.cortex-onboarding-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cortex-onboarding-prompt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background-color 100ms;
+}
+
+.cortex-onboarding-prompt:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.cortex-onboarding-prompt-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 1px;
+  color: #a78bfa;
+}
+
+.cortex-onboarding-prompt-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* MCP step */
+.cortex-onboarding-mcp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 6px;
+  border: 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cortex-onboarding-mcp-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cortex-onboarding-mcp-configs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cortex-onboarding-mcp-config {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cortex-onboarding-mcp-config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--background-primary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cortex-onboarding-mcp-config-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-normal);
+}
+
+.cortex-onboarding-mcp-config-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.cortex-onboarding-mcp-config-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 100ms;
+}
+
+.cortex-onboarding-mcp-config-copy:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.cortex-onboarding-mcp-config-hint {
+  padding: 6px 10px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.cortex-onboarding-mcp-config-payload {
+  margin: 6px 10px 10px;
+  padding: 8px 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+  color: var(--text-normal);
+}
+
+.cortex-onboarding-mcp-config-payload.is-cmd {
+  background: #0f172a;
+  color: #94e0c0;
+}
+
+.cortex-onboarding-mcp-stop {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cortex-onboarding-mcp-stop:hover {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
+
+/* Footer */
+.cortex-onboarding-view-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 4px;
+}
+
+.cortex-onboarding-view-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #34d399;
+}
+
+.cortex-onboarding-view-done-icon {
+  display: inline-flex;
+}
+
+.cortex-onboarding-view-dismiss {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cortex-onboarding-view-dismiss:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.cortex-onboarding-view-help {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.cortex-onboarding-view-help:hover {
+  color: var(--interactive-accent);
+}
+
+/* ── Starters modal (browse-all chat starter prompts) ───────────────── */
+
+.cortex-starters-modal {
+  width: min(720px, 90vw);
+}
+
+.cortex-starters-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cortex-starters-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cortex-starters-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cortex-starters-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 16px;
+  padding: 8px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.cortex-starters-search:focus-within {
+  border-color: var(--interactive-accent);
+}
+
+.cortex-starters-search-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cortex-starters-search-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text-normal);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.cortex-starters-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cortex-starters-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.cortex-starters-section {
+  margin-bottom: 16px;
+}
+
+.cortex-starters-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 8px;
+}
+
+.cortex-starters-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cortex-starters-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 80ms ease, border-color 80ms ease, transform 80ms ease;
+  min-width: 0;
+  text-align: left;
+  user-select: none;
+}
+
+.cortex-starters-card:hover,
+.cortex-starters-card:focus-visible {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.cortex-starters-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--background-modifier-hover);
+  color: var(--interactive-accent);
+  flex-shrink: 0;
+}
+
+.cortex-starters-card-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.cortex-starters-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cortex-starters-card-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cortex-starters-card-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .cortex-starters-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Inline citation pills — turns "[1]" markers in the answer into
+   clickable badges that link to the source note / URL. Sits inline with
+   surrounding text without breaking the line baseline. */
+.cortex-chat-citation-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  margin: 0 1px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-monospace);
+  line-height: 1;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  text-decoration: none !important;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: all 80ms ease;
+}
+.cortex-chat-citation-inline:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+
+/* Code block toolbar — Copy + Save-to-note pinned to the top-right of
+   each <pre>. Hidden by default, fades in on hover for a non-distracting
+   reading experience. */
+.cortex-chat-answer .cortex-code-block {
+  position: relative;
+}
+.cortex-code-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  pointer-events: none;
+}
+.cortex-chat-answer .cortex-code-block:hover .cortex-code-toolbar,
+.cortex-chat-answer .cortex-code-block:focus-within .cortex-code-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.cortex-code-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 80ms ease;
+}
+.cortex-code-toolbar-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+.cortex-code-toolbar-btn .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Mini table-of-contents at the top of long answers (5+ headings). */
+.cortex-chat-toc {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+.cortex-chat-toc-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.cortex-chat-toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.cortex-chat-toc-list li { margin: 2px 0; }
+.cortex-chat-toc-list a {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.cortex-chat-toc-list a:hover { color: var(--interactive-accent); text-decoration: underline; }
+.cortex-chat-toc-h2 { padding-left: 10px; }
+.cortex-chat-toc-h3 { padding-left: 20px; font-size: 11px; }
+
+/* Entity highlight — bold first occurrence with subtle accent underline. */
+.cortex-chat-entity-highlight {
+  background: linear-gradient(transparent 60%, rgba(167, 139, 250, 0.25) 60%);
+  font-weight: 600;
+  cursor: help;
+}
+
+/* Wikilink hover preview popover (#4). Floating tooltip with the first
+   ~240 chars of the linked note. */
+.cortex-chat-wikilink-preview {
+  position: fixed;
+  z-index: 9999;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+.cortex-chat-wikilink-preview-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-normal);
+  margin-bottom: 4px;
+}
+.cortex-chat-wikilink-preview-body {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+/* Per-bubble token + latency footer pill (#14). */
+.cortex-chat-turn-meta {
+  margin-top: 6px;
+  font-size: 10px;
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* History popover search input (#17). */
+.cortex-chat-history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 4px;
+  padding: 6px 10px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+.cortex-chat-history-search:focus-within { border-color: var(--interactive-accent); }
+.cortex-chat-history-search-icon { color: var(--text-muted); display: inline-flex; }
+.cortex-chat-history-search-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+  color: var(--text-normal);
+}
+.cortex-chat-history-snippet {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* "Why did you say that?" evidence modal (#20). */
+.cortex-evidence-modal { max-width: 600px; }
+.cortex-evidence-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 12px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cortex-evidence-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.cortex-evidence-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+.cortex-evidence-name { font-weight: 500; color: var(--text-normal); font-size: 13px; }
+.cortex-evidence-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.cortex-evidence-score {
+  margin-left: auto;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cortex-evidence-snippet {
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Streaming shimmer (#10) — soft pulse on the trailing word during
+   generation. Adds a subtle ambient cue beyond the cursor. */
+@keyframes cortex-stream-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.cortex-chat-answer-streaming::after {
+  content: '▍';
+  display: inline-block;
+  margin-left: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-normal) 50%,
+    var(--text-muted) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cortex-stream-shimmer 1.4s linear infinite;
+}
+
+/* Drag-out was removed — Obsidian doesn't accept arbitrary
+   text/markdown drops from foreign DOM elements, leaving a phantom
+   affordance. Save-to-note (button in the action toolbar) replaces it. */
+
+/* Active-file context chip — sits above the composer when an .md file is
+   open. Click to toggle "use this note as context for the next prompt". */
+.cortex-chat-active-file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  transition: all 100ms ease;
+}
+.cortex-chat-active-file-chip.is-hidden { display: none; }
+.cortex-chat-active-file-chip.is-on {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: var(--interactive-accent);
+}
+.cortex-chat-active-file-chip-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.cortex-chat-active-file-chip-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.cortex-chat-active-file-chip.is-on .cortex-chat-active-file-chip-icon {
+  color: var(--interactive-accent);
+}
+.cortex-chat-active-file-chip-prefix {
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+.cortex-chat-active-file-chip-name {
+  color: var(--text-normal);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cortex-chat-active-file-chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.cortex-chat-active-file-chip-toggle:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.cortex-chat-active-file-chip-toggle .svg-icon { width: 14px; height: 14px; }
+
+/* Math (#5) — Obsidian's MarkdownRenderer handles KaTeX inline; ensure
+   it doesn't overflow the bubble width and aligns left like the rest. */
+.cortex-chat-answer .math {
+  text-align: left !important;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.cortex-chat-answer .math-block { margin: 8px 0; }
+
+/* Last-resort plaintext fallback when MarkdownRenderer throws. */
+.cortex-chat-answer-plaintext {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--background-secondary);
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  margin: 0;
+  overflow-x: auto;
 }

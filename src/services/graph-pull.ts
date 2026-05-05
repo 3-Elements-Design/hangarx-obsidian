@@ -181,7 +181,11 @@ export class GraphPull {
       if (seenIds.has(id)) continue;
       try {
         const file = this.app.vault.getAbstractFileByPath(path);
-        if (file) await this.app.vault.delete(file);
+        // Use FileManager.trashFile so the user's delete preference
+        // (system trash vs Obsidian trash vs permanent) is honoured —
+        // Vault.delete bypasses that and the obsidianmd ESLint plugin
+        // flags it under `prefer-fileManager-trashFile`.
+        if (file) await this.app.fileManager.trashFile(file);
         delete this.index.hashes[id];
         delete this.index.paths[id];
         result.deleted++;
@@ -555,7 +559,7 @@ export class GraphPull {
   /* ── Source note enrichment ─────────────────────────────────────── */
 
   private async enrichSourceNotes(
-    entities: GraphEntity[],
+    _entities: GraphEntity[],
     relationships: GraphRelationship[],
     entityById: Map<string, GraphEntity>,
     onProgress?: (p: PullProgress) => void,

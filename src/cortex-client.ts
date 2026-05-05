@@ -5,6 +5,24 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import type { CortexSettings } from './settings';
 
+/**
+ * Resolve the workspace identifier the server should scope this request
+ * to. In local mode, every vault gets its own `vaultId` (auto-generated
+ * on first run, persisted inside the vault's plugin data) — using that
+ * as the effective `workspace_id` ensures vault A and vault B on the
+ * same machine never share Postgres rows / pgvector indices / FalkorDB
+ * scope. Closes the cross-vault data-leakage seam.
+ *
+ * In cloud mode, the user's selected cloud `workspaceId` is the truth —
+ * cross-tenant isolation already runs through the auth layer.
+ */
+export function effectiveWorkspaceId(s: CortexSettings): string {
+  if (s.connectionMode === 'local') {
+    return s.vaultId || s.workspaceId || '';
+  }
+  return s.workspaceId || '';
+}
+
 export interface RelatedNote {
   noteName: string;
   entityId?: string;
@@ -75,7 +93,55 @@ export interface AskResponse {
   confidence: number;
   followUps: string[];
   metadata: Record<string, unknown>;
+  /** Present only when the server ran the request through the agent harness
+   *  (Sprint 2). One entry per tool the agent invoked, in chronological
+   *  order. The chat panel renders these inline as collapsible cards
+   *  ("🔍 Searched vault for X — 4 results, 320ms"). */
+  toolCalls?: AgentToolCall[];
+  /** Persisted run id from the agent harness (L7). When present, the
+   *  chat panel renders a "View run" link to the dashboard's
+   *  `/agents/runs/[id]` replay viewer. Empty for legacy RAG mode. */
+  runId?: string;
+  /** Per-iteration token spend captured by the harness (L9). */
+  iterationTokens?: Array<{ iteration: number; prompt: number; completion: number; total: number }>;
+  /** Stop reason — `'completed'`, `'max-iterations'`, etc. Helps the
+   *  UI distinguish a clean answer from a guard-tripped one. */
+  reason?: string;
+  /** Aggregated token usage across all iterations. */
+  tokenUsage?: { prompt: number; completion: number; total: number };
 }
+
+export interface AgentToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  durationMs: number;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+/** Web-search backend status from `/v1/agent/web-search-status`.
+ *  Drives the dynamic dependency hint in the Agent options block. */
+export interface WebSearchStatus {
+  backend: 'tavily' | 'perplexity' | 'openai-native' | 'anthropic-native' | 'gemini-grounding' | 'none';
+  configured: boolean;
+  activeProvider: string | null;
+  activeModel: string | null;
+  /** Tavily configured on the server. Preferred fallback for agent loops. */
+  tavilyFallback: boolean;
+  perplexityFallback: boolean;
+}
+
+/** L1 streaming event shape from `/v1/agent/run/stream` (normalized). */
+export type AgentStreamEvent =
+  | { kind: 'iteration'; iteration: number }
+  | { kind: 'tool-start'; name: string; args: Record<string, unknown>; iteration: number; toolCallId?: string }
+  | { kind: 'tool-end'; name: string; durationMs: number; ok: boolean; result?: unknown; error?: string; iteration: number; toolCallId?: string }
+  | { kind: 'text'; content: string }
+  | { kind: 'subrun-start'; parentIteration: number; goal: string; tools: string[]; childRunId?: string }
+  | { kind: 'subrun-end'; parentIteration: number; goal: string; childRunId?: string; answer: string; iterations: number; durationMs: number; ok: boolean; reason: string; error?: string }
+  | { kind: 'done'; runId?: string; finalMessage?: { content?: string | null }; toolCalls?: AgentToolCall[]; iterations?: number; tokenUsage?: { prompt: number; completion: number; total: number }; iterationTokens?: AskResponse['iterationTokens']; reason?: string; retrieval?: Record<string, unknown> }
+  | { kind: 'error'; message: string };
 
 export interface SuggestedLink {
   targetNote: string;
@@ -246,6 +312,228 @@ export interface LlmProviderEntry {
 
 export type LlmModelRegistry = LlmProviderEntry[] | Record<string, LlmProviderEntry>;
 
+// ─── Internal response shapes for `req<...>` ───────────────────────────────
+//
+// These describe the JSON envelopes the Cortex API returns. They live
+// here (rather than in `types/index.ts`) because they're an implementation
+// detail of the client — public callers consume the strongly-typed return
+// values from each method, not the raw envelope.
+
+/** Loose entity shape returned by /v1/graph/search, /v1/graph/diff, etc.
+ *  Properties are optional because the server omits unset fields. */
+interface RawGraphEntity {
+  id: string;
+  name?: string;
+  type?: string;
+  score?: number;
+  relevance?: number;
+  properties?: {
+    filePath?: string;
+    description?: string;
+    source?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+/** Loose path step shape from /v1/graph/paths. */
+interface RawPathStep {
+  fromName?: string;
+  fromType?: string;
+  toName?: string;
+  toType?: string;
+  relType?: string;
+  [k: string]: unknown;
+}
+
+/** Node within a graph-traversal path. */
+interface RawPathNode {
+  label?: string;
+  type?: string;
+  [k: string]: unknown;
+}
+
+/** Edge within a graph-traversal path. */
+interface RawPathEdge {
+  source?: string;
+  target?: string;
+  type?: string;
+  [k: string]: unknown;
+}
+
+/** Loose path shape from /v1/graph/paths. The server returns either
+ *  a flattened `steps[]` form or a nodes+edges form depending on which
+ *  endpoint you hit; we accept both. */
+interface RawPath {
+  steps?: RawPathStep[];
+  nodes?: RawPathNode[];
+  edges?: RawPathEdge[];
+  length?: number;
+  [k: string]: unknown;
+}
+
+/** Loose contradiction shape from /v1/graph/contradictions. */
+interface RawContradiction {
+  conflictType?: 'direct' | 'temporal' | 'value_mismatch';
+  conflictDescription?: string;
+  confidence?: number;
+  claim1?: {
+    id?: string;
+    text?: string;
+    subject?: string;
+    sourceName?: string;
+    source?: { sourceName?: string; [k: string]: unknown };
+    [k: string]: unknown;
+  };
+  claim2?: {
+    id?: string;
+    text?: string;
+    subject?: string;
+    sourceName?: string;
+    source?: { sourceName?: string; [k: string]: unknown };
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+/** Loose memory item shape from /v1/memory/recall. */
+interface RawMemoryItem {
+  id: string;
+  content?: string;
+  source?: string;
+  priority?: string;
+  createdAt?: string;
+  [k: string]: unknown;
+}
+
+/** Common ingest/upload response payload. */
+interface RawIngestData {
+  documentId?: string;
+  entitiesCreated?: number;
+  entityCount?: number;
+  [k: string]: unknown;
+}
+
+/** Graph diff payload from /v1/graph/diff. */
+interface RawGraphDiff {
+  addedEntities?: unknown[];
+  modifiedEntities?: unknown[];
+  removedEntities?: unknown[];
+  [k: string]: unknown;
+}
+
+/** Loose entity-with-citation-fields shape as it appears in retrieval
+ *  envelopes returned by /chat/answer and the streaming agent's `done`
+ *  event. Used by extractCitations / extractEntities / extractDocuments. */
+interface RawRetrievalEntity {
+  name?: string;
+  type?: string;
+  description?: string;
+  score?: number;
+  relevance?: number;
+  properties?: {
+    description?: string;
+    filePath?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+/** Loose document shape as it appears under documents.recentDocuments. */
+interface RawRetrievalDocument {
+  title?: string;
+  name?: string;
+  filename?: string;
+  snippet?: string;
+  summary?: string;
+  description?: string;
+  filePath?: string;
+  path?: string;
+  url?: string;
+  youtubeurl?: string;
+  score?: number;
+  match?: number;
+  relevance?: number;
+  publishdate?: string;
+  publishDate?: string;
+  publish_date?: string;
+  guest?: string;
+  author?: string;
+  source?: string;
+  [k: string]: unknown;
+}
+
+/** Loose vector-chunk shape from vectorMemory.relevantChunks. */
+interface RawRetrievalChunk {
+  text?: string;
+  content?: string;
+  snippet?: string;
+  title?: string;
+  documentName?: string;
+  source?: string;
+  filePath?: string;
+  meta_fileName?: string;
+  score?: number;
+  metadata?: {
+    documentName?: string;
+    source?: string;
+    fileName?: string;
+    filePath?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+/** Loose wire-format payload for the `agent.*` SSE events the cortex-api
+ *  emits. Every field is optional because the server may omit fields per
+ *  event type — the consumer narrows by `eventName`, not by shape. */
+interface WireAgentEvent {
+  iteration?: number;
+  name?: string;
+  args?: Record<string, unknown>;
+  toolCallId?: string;
+  durationMs?: number;
+  ok?: boolean;
+  result?: unknown;
+  error?: string;
+  content?: string;
+  parentIteration?: number;
+  goal?: string;
+  tools?: unknown;
+  childRunId?: string;
+  answer?: string;
+  iterations?: number;
+  reason?: string;
+  runId?: string;
+  toolCalls?: AgentToolCall[];
+  iterationTokens?: AskResponse['iterationTokens'];
+  tokenUsage?: { prompt: number; completion: number; total: number };
+  retrieval?: Record<string, unknown>;
+  suggestedFollowUps?: unknown;
+  finalMessage?: { content?: string | null; [k: string]: unknown };
+  message?: string;
+  [k: string]: unknown;
+}
+
+/** Top-level retrieval envelope returned by /chat/answer + streaming agent. */
+interface RawRetrievalEnvelope {
+  knowledgeGraph?: {
+    entities?: RawRetrievalEntity[];
+    [k: string]: unknown;
+  };
+  entities?: RawRetrievalEntity[];
+  documents?: {
+    recentDocuments?: RawRetrievalDocument[];
+    [k: string]: unknown;
+  } | RawRetrievalDocument[];
+  vectorMemory?: {
+    relevantChunks?: RawRetrievalChunk[];
+    [k: string]: unknown;
+  };
+  relevantChunks?: RawRetrievalChunk[];
+  [k: string]: unknown;
+}
+
 export class CortexClient {
   constructor(private settings: CortexSettings) {}
 
@@ -257,7 +545,15 @@ export class CortexClient {
       'Content-Type': 'application/json',
     };
     if (this.settings.apiKey) headers.Authorization = `Bearer ${this.settings.apiKey}`;
-    if (this.settings.workspaceId) headers['x-workspace-id'] = this.settings.workspaceId;
+    const wsId = effectiveWorkspaceId(this.settings);
+    if (wsId) headers['x-workspace-id'] = wsId;
+    // Vault isolation rides on `x-workspace-id` — `effectiveWorkspaceId`
+    // returns the per-vault `vaultId` in local mode, so each vault sends
+    // a distinct workspace identifier and the server's existing
+    // workspace-scoped tenancy filtering does the isolation. We don't
+    // also send `x-vault-id` because older cortex-api containers don't
+    // include it in their CORS allowlist (and it's not consumed server-
+    // side anyway).
     Object.assign(headers, init.headers ?? {});
 
     const res = await requestUrl({
@@ -271,7 +567,7 @@ export class CortexClient {
       // Include the host so you can tell at a glance whether this hit cloud
       // vs. local — the same 401 means very different things in each mode.
       let host = '';
-      try { host = new URL(this.settings.apiUrl).host; } catch {}
+      try { host = new URL(this.settings.apiUrl).host; } catch { /* malformed apiUrl — keep `host` empty */ }
       throw new Error(`Cortex [${host}] ${path} → ${res.status}: ${res.text}`);
     }
     return res.json as T;
@@ -300,7 +596,7 @@ export class CortexClient {
           mimetype: 'text/markdown',
           contentText: content,
         },
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         vaultId: this.settings.vaultId,
         sourceType: 'md',
         fastMode: opts.fastMode === true,
@@ -328,7 +624,7 @@ export class CortexClient {
           mimetype,
           contentBase64: base64,
         },
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         vaultId: this.settings.vaultId,
         sourceType: mimetype.split('/')[0] || 'file',
         fastMode: false,
@@ -360,7 +656,7 @@ export class CortexClient {
   } = {}): Promise<{ communitiesCreated: number; levels: number; modularity: number }> {
     const body = {
       ...opts,
-      ...(this.settings.workspaceId ? { workspaceId: this.settings.workspaceId } : {}),
+      ...(effectiveWorkspaceId(this.settings) ? { workspaceId: effectiveWorkspaceId(this.settings) } : {}),
     };
     const res = await this.req<{ data: { communitiesCreated: number; levels: number; modularity: number } }>(
       '/v1/graph/communities/detect',
@@ -375,7 +671,7 @@ export class CortexClient {
     limit?: number;
   } = {}): Promise<CommunitySummary[]> {
     const params = new URLSearchParams();
-    if (this.settings.workspaceId) params.set('workspaceId', this.settings.workspaceId);
+    if (effectiveWorkspaceId(this.settings)) params.set('workspaceId', effectiveWorkspaceId(this.settings));
     if (opts.level !== undefined) params.set('level', String(opts.level));
     if (opts.minMembers !== undefined) params.set('minMembers', String(opts.minMembers));
     if (opts.limit !== undefined) params.set('limit', String(opts.limit));
@@ -403,7 +699,7 @@ export class CortexClient {
       method: 'POST',
       body: JSON.stringify({
         filePath,
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         vaultId: this.settings.vaultId,
       }),
     });
@@ -413,12 +709,12 @@ export class CortexClient {
    * Ingest a URL — scrapes the page and extracts entities into the graph.
    */
   async ingestUrl(url: string, title?: string): Promise<{ documentId?: string; entityCount?: number }> {
-    const res = await this.req<{ data: any }>('/v1/ingest', {
+    const res = await this.req<{ data: RawIngestData }>('/v1/ingest', {
       method: 'POST',
       body: JSON.stringify({
         url,
         title,
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         extractEntities: true,
       }),
     });
@@ -431,12 +727,12 @@ export class CortexClient {
   /**
    * Get a diff of graph changes since a given timestamp.
    */
-  async graphDiff(since: string): Promise<{ added: any[]; modified: any[]; removed: any[] }> {
+  async graphDiff(since: string): Promise<{ added: unknown[]; modified: unknown[]; removed: unknown[] }> {
     const params = new URLSearchParams({
       sinceTimestamp: since,
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
     });
-    const res = await this.req<{ data: any }>(`/v1/graph/diff?${params.toString()}`);
+    const res = await this.req<{ data: RawGraphDiff }>(`/v1/graph/diff?${params.toString()}`);
     return {
       added: res.data?.addedEntities ?? [],
       modified: res.data?.modifiedEntities ?? [],
@@ -454,12 +750,14 @@ export class CortexClient {
       q: name,
       type: 'Note',
       limit: String(limit),
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
     });
-    const res = await this.req<{ success: boolean; data: { entities: any[] } }>(
+    const res = await this.req<{ success: boolean; data: { entities: RawGraphEntity[] } }>(
       `/v1/graph/search?${params.toString()}`,
     );
-    return (res.data?.entities ?? []).map(e => ({ id: e.id, name: e.name, type: e.type }));
+    return (res.data?.entities ?? [])
+      .filter((e): e is RawGraphEntity & { name: string } => typeof e.name === 'string')
+      .map(e => ({ id: e.id, name: e.name, type: e.type }));
   }
 
   async related(noteName: string, limit = 10): Promise<RelatedNote[]> {
@@ -467,13 +765,15 @@ export class CortexClient {
       q: noteName,
       type: 'Note',
       limit: String(limit),
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
     });
-    const res = await this.req<{ success: boolean; data: { entities: any[] } }>(
+    const res = await this.req<{ success: boolean; data: { entities: RawGraphEntity[] } }>(
       `/v1/graph/search?${params.toString()}`,
     );
     return (res.data?.entities ?? [])
-      .filter(e => e?.name && e.name !== noteName)
+      .filter((e): e is RawGraphEntity & { name: string } =>
+        typeof e?.name === 'string' && e.name !== noteName,
+      )
       .map(e => ({
         noteName: e.name,
         entityId: e.id,
@@ -493,20 +793,20 @@ export class CortexClient {
       from: fromEntityId,
       to: toEntityId,
       maxHops: String(maxHops),
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
     });
-    const res = await this.req<{ success: boolean; data: { paths: any[] } }>(
+    const res = await this.req<{ success: boolean; data: { paths: RawPath[] } }>(
       `/v1/graph/explore/paths?${params.toString()}`,
     );
     return (res.data?.paths ?? []).map(p => {
       const nodes = p.nodes ?? [];
       const edges = p.edges ?? [];
-      const steps: PathStep[] = edges.map((edge: any, i: number) => ({
-        fromName: nodes[i]?.label ?? edge.source,
+      const steps: PathStep[] = edges.map((edge, i) => ({
+        fromName: nodes[i]?.label ?? edge.source ?? '',
         fromType: nodes[i]?.type ?? '',
-        toName: nodes[i + 1]?.label ?? edge.target,
+        toName: nodes[i + 1]?.label ?? edge.target ?? '',
         toType: nodes[i + 1]?.type ?? '',
-        relType: edge.type,
+        relType: edge.type ?? '',
       }));
       return { steps, length: typeof p.length === 'number' ? p.length : steps.length };
     });
@@ -515,27 +815,27 @@ export class CortexClient {
   /** Find contradicting claims across the workspace. */
   async findContradictions(limit = 25): Promise<Contradiction[]> {
     const params = new URLSearchParams({
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
       limit: String(limit),
     });
-    const res = await this.req<{ success: boolean; data: { contradictions: any[] } }>(
+    const res = await this.req<{ success: boolean; data: { contradictions: RawContradiction[] } }>(
       `/v1/graph/claims/contradictions?${params.toString()}`,
     );
-    return (res.data?.contradictions ?? []).map(c => ({
-      conflictType: c.conflictType,
-      conflictDescription: c.conflictDescription,
+    return (res.data?.contradictions ?? []).map<Contradiction>(c => ({
+      conflictType: c.conflictType ?? 'direct',
+      conflictDescription: c.conflictDescription ?? '',
       confidence: c.confidence ?? 0,
       claim1: {
-        id: c.claim1?.id,
-        text: c.claim1?.text,
-        subject: c.claim1?.subject,
-        sourceName: c.claim1?.source?.sourceName,
+        id: c.claim1?.id ?? '',
+        text: c.claim1?.text ?? '',
+        subject: c.claim1?.subject ?? '',
+        sourceName: c.claim1?.source?.sourceName ?? c.claim1?.sourceName,
       },
       claim2: {
-        id: c.claim2?.id,
-        text: c.claim2?.text,
-        subject: c.claim2?.subject,
-        sourceName: c.claim2?.source?.sourceName,
+        id: c.claim2?.id ?? '',
+        text: c.claim2?.text ?? '',
+        subject: c.claim2?.subject ?? '',
+        sourceName: c.claim2?.source?.sourceName ?? c.claim2?.sourceName,
       },
     }));
   }
@@ -545,7 +845,7 @@ export class CortexClient {
     await this.req('/v1/memory/remember', {
       method: 'POST',
       body: JSON.stringify({
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         agentId: 'hangarx-obsidian',
         content,
         source,
@@ -556,23 +856,35 @@ export class CortexClient {
 
   /** Retrieve memories relevant to a query — injected into the chat prompt. */
   async recall(query: string, limit = 5): Promise<MemoryItem[]> {
-    const res = await this.req<{ success: boolean; data: { items: any[] } }>('/v1/memory/recall', {
+    const res = await this.req<{ success: boolean; data: { items: RawMemoryItem[] } }>('/v1/memory/recall', {
       method: 'POST',
       body: JSON.stringify({
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         agentId: 'hangarx-obsidian',
         query,
         method: 'hybrid',
         limit,
       }),
     });
-    return (res.data?.items ?? []).map(m => ({
+    return (res.data?.items ?? []).map<MemoryItem>(m => ({
       id: m.id,
-      content: m.content,
+      content: m.content ?? '',
       source: m.source,
       priority: m.priority,
       createdAt: m.createdAt,
     }));
+  }
+
+  /**
+   * Probe which web-search backend the cortex-api will use for the
+   * next `web_search` tool call. Returns the active LLM provider's
+   * native search when configured (OpenAI / Anthropic / Gemini), else
+   * Perplexity fallback, else `'none'`. Used by the settings page to
+   * render an accurate dependency hint.
+   */
+  async getWebSearchStatus(): Promise<WebSearchStatus> {
+    const res = await this.req<{ data: WebSearchStatus }>('/v1/agent/web-search-status', { method: 'GET' });
+    return res.data;
   }
 
   async ask(query: string, _sessionId?: string): Promise<AskResponse> {
@@ -580,6 +892,24 @@ export class CortexClient {
     // includes the structured `raw` context (entities, documents) and
     // suggestedFollowUps used to render the rich UI. sessionId is currently
     // a no-op server-side; kept in the signature for forward compatibility.
+    //
+    // chatAgentMode: when 'agent', we send `enabledTools` so the server runs
+    // the request through the canonical `runAgent` harness (Sprint 2 of the
+    // agent convergence). The server returns a `toolCalls` trace alongside
+    // the answer that the chat panel renders inline. When 'rag' (default),
+    // the legacy single-shot retrieval flow runs unchanged.
+    const agentMode = this.settings.chatAgentMode === 'agent';
+    const enabledTools = agentMode
+      ? [
+          'knowledge_graph_search',
+          'cortex_paths',
+          'cortex_recall',           // L3 memory (Sprint 7)
+          'cortex_remember',         // L3 memory (Sprint 7)
+          'get_current_time',
+          ...(this.settings.chatAgentWebSearch ? ['web_search', 'web_scrape'] : []),
+        ]
+      : undefined;
+
     const res = await this.req<{
       success: boolean;
       data: {
@@ -587,18 +917,34 @@ export class CortexClient {
         context?: string;
         suggestedFollowUps?: string[];
         raw?: {
-          documents?: { recentDocuments?: any[] };
-          entities?: any[];
-          knowledgeGraph?: { entities?: any[]; relationships?: any[] };
+          documents?: { recentDocuments?: unknown[] };
+          entities?: unknown[];
+          knowledgeGraph?: { entities?: unknown[]; relationships?: unknown[] };
         };
+        toolCalls?: Array<{
+          name: string;
+          args: Record<string, unknown>;
+          durationMs: number;
+          ok: boolean;
+          result?: unknown;
+          error?: string;
+        }>;
+        // L7/L9 fields the harness emits on the `done` payload — surfaced
+        // through chat/answer so the chat panel can render replay links
+        // and per-iteration token breakdowns.
+        runId?: string;
+        iterationTokens?: AskResponse['iterationTokens'];
+        reason?: string;
+        tokenUsage?: AskResponse['tokenUsage'];
       };
       meta?: { confidence?: number } & Record<string, unknown>;
     }>('/v1/ask/chat/answer', {
       method: 'POST',
       body: JSON.stringify({
         message: query,
-        workspaceId: this.settings.workspaceId,
-        expanded: true,
+        workspaceId: effectiveWorkspaceId(this.settings),
+        expanded: !agentMode, // expanded mode is only meaningful for the legacy RAG path
+        ...(enabledTools ? { enabledTools } : {}),
       }),
     });
 
@@ -611,6 +957,199 @@ export class CortexClient {
       confidence: typeof res.meta?.confidence === 'number' ? res.meta.confidence : 0,
       followUps: d.suggestedFollowUps ?? [],
       metadata: { ...(res.meta ?? {}) },
+      ...(d.toolCalls ? { toolCalls: d.toolCalls } : {}),
+      ...(d.runId ? { runId: d.runId } : {}),
+      ...(d.iterationTokens ? { iterationTokens: d.iterationTokens } : {}),
+      ...(d.reason ? { reason: d.reason } : {}),
+      ...(d.tokenUsage ? { tokenUsage: d.tokenUsage } : {}),
+    };
+  }
+
+  /**
+   * Streaming variant of {@link ask} — targets `/v1/agent/run/stream`
+   * directly so the plugin sees per-iteration / per-tool-call events as
+   * they happen, not just the final result. Caller passes an `onEvent`
+   * callback that fires for every normalized event; the returned promise
+   * resolves with the same {@link AskResponse} shape `ask()` returns
+   * (built from the terminal `done` event).
+   *
+   * Why this lives next to `ask()`: the chat panel can pick the path
+   * based on the `chatStream` setting without juggling two API surfaces.
+   * Rendering paths (entities, documents, citations, follow-ups) work
+   * the same on the result either way — this method just adds a live
+   * tool-call card stream during the run.
+   */
+  async askStream(
+    query: string,
+    onEvent: (ev: AgentStreamEvent) => void,
+    opts?: {
+      skill?: string;
+      webSearch?: boolean;
+      signal?: AbortSignal;
+      /** Prior conversation turns. Server merges them with the system
+       *  prompt + the new user message. Without this, every turn looks
+       *  like the start of a fresh conversation and short replies like
+       *  "yes" are unintelligible. */
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    },
+  ): Promise<AskResponse> {
+    const url = `${this.settings.apiUrl.replace(/\/$/, '')}/v1/agent/run/stream`;
+    const skill = opts?.skill ?? this.settings.chatAgentSkill ?? 'obsidian-chat';
+    const webSearch = opts?.webSearch ?? this.settings.chatAgentWebSearch;
+    const tools = webSearch
+      ? undefined  // skill `obsidian-chat` already includes web_search
+      : ['knowledge_graph_search', 'cortex_paths', 'cortex_recall', 'cortex_remember', 'get_current_time'];
+    const body: Record<string, unknown> = {
+      message: query,
+      skill,
+      surface: 'obsidian',
+    };
+    if (tools) body.tools = tools;
+    if (opts?.history && opts.history.length > 0) body.history = opts.history;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'x-api-key': this.settings.apiKey,
+    };
+    const streamWsId = effectiveWorkspaceId(this.settings);
+    if (streamWsId) headers['x-workspace-id'] = streamWsId;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      // Caller's AbortSignal aborts the streaming fetch — chat panel
+      // wires this to the user's Stop button + a 5-min hard timeout.
+      signal: opts?.signal,
+    });
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Stream request failed: HTTP ${response.status} ${text.slice(0, 200)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answerText = '';
+    let finalToolCalls: AgentToolCall[] = [];
+    let finalRunId: string | undefined;
+    let finalIterationTokens: AskResponse['iterationTokens'] | undefined;
+    let finalTokenUsage: AskResponse['tokenUsage'] | undefined;
+    let finalReason: string | undefined;
+    let finalRetrieval: Record<string, unknown> | undefined;
+    let finalFollowUps: string[] = [];
+    // Track per-iteration tool calls so the synthesized AskResponse's
+    // `toolCalls` matches what `/chat/answer` would have returned even
+    // when the server's `done` payload omits the trace.
+    const liveToolCalls: AgentToolCall[] = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE events end with a blank line; split, keep the trailing partial.
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const eventMatch = block.match(/^event: (.+)$/m);
+        const dataMatch = block.match(/^data: (.+)$/m);
+        if (!eventMatch || !dataMatch) continue;
+        const eventName = eventMatch[1].trim();
+        let data: WireAgentEvent = {};
+        try { data = JSON.parse(dataMatch[1]) as WireAgentEvent; } catch { continue; }
+        // Translate the server's `agent.tool.start` etc. into the SDK's
+        // normalized event names — same names the TS SDK exposes.
+        switch (eventName) {
+          case 'agent.iteration':
+            onEvent({ kind: 'iteration', iteration: data.iteration ?? 0 });
+            break;
+          case 'agent.tool.start':
+            onEvent({ kind: 'tool-start', name: data.name ?? '', args: data.args ?? {}, iteration: data.iteration ?? 0, toolCallId: data.toolCallId });
+            break;
+          case 'agent.tool.end': {
+            const tc: AgentToolCall = {
+              name: data.name ?? '',
+              args: data.args ?? {},
+              durationMs: data.durationMs ?? 0,
+              ok: data.ok ?? false,
+              result: data.result,
+              error: data.error,
+            };
+            liveToolCalls.push(tc);
+            onEvent({ kind: 'tool-end', ...tc, iteration: data.iteration ?? 0, toolCallId: data.toolCallId });
+            break;
+          }
+          case 'agent.text':
+            answerText += data.content ?? '';
+            onEvent({ kind: 'text', content: data.content ?? '' });
+            break;
+          case 'agent.subrun.start':
+            onEvent({
+              kind: 'subrun-start',
+              parentIteration: data.parentIteration ?? 0,
+              goal: data.goal ?? '',
+              tools: Array.isArray(data.tools) ? data.tools : [],
+              childRunId: data.childRunId,
+            });
+            break;
+          case 'agent.subrun.end':
+            onEvent({
+              kind: 'subrun-end',
+              parentIteration: data.parentIteration ?? 0,
+              goal: data.goal ?? '',
+              childRunId: data.childRunId,
+              answer: data.answer ?? '',
+              iterations: data.iterations ?? 0,
+              durationMs: data.durationMs ?? 0,
+              ok: data.ok ?? false,
+              reason: data.reason ?? '',
+              error: data.error,
+            });
+            break;
+          case 'agent.done':
+            finalRunId = data.runId;
+            finalToolCalls = data.toolCalls ?? liveToolCalls;
+            finalIterationTokens = data.iterationTokens;
+            finalTokenUsage = data.tokenUsage;
+            finalReason = data.reason;
+            finalRetrieval = data.retrieval;
+            if (Array.isArray(data.suggestedFollowUps)) {
+              finalFollowUps = data.suggestedFollowUps.filter((s: unknown) => typeof s === 'string');
+            }
+            if (typeof data.finalMessage?.content === 'string' && data.finalMessage.content.length > 0) {
+              // The terminal frame carries the canonical answer text;
+              // prefer it over the chunked accumulation in case the
+              // server emits a final answer without per-chunk events.
+              answerText = data.finalMessage.content;
+            }
+            onEvent({ kind: 'done', runId: finalRunId, finalMessage: data.finalMessage, toolCalls: finalToolCalls, iterations: data.iterations, tokenUsage: finalTokenUsage, iterationTokens: finalIterationTokens, reason: finalReason, retrieval: finalRetrieval });
+            break;
+          case 'agent.error':
+            onEvent({ kind: 'error', message: data.message ?? 'unknown agent error' });
+            break;
+        }
+      }
+    }
+
+    // Synthesize the AskResponse the chat panel renders. The harness
+    // now includes the GraphRAG retrieval envelope on the `done` event
+    // when the agent called `knowledge_graph_search`, so we run the
+    // same extractors `/chat/answer` uses to fill citations/entities/
+    // documents from it. When the agent didn't search the graph (e.g.
+    // calculator-only runs), those panels stay empty — accurately
+    // reflecting that the answer wasn't graph-grounded.
+    return {
+      answer: answerText,
+      citations: extractCitations(finalRetrieval),
+      entities: extractEntities(finalRetrieval),
+      documents: extractDocuments(finalRetrieval),
+      confidence: 0,
+      followUps: finalFollowUps,
+      metadata: finalRetrieval ? { retrieval: finalRetrieval } : {},
+      toolCalls: finalToolCalls,
+      ...(finalRunId ? { runId: finalRunId } : {}),
+      ...(finalIterationTokens ? { iterationTokens: finalIterationTokens } : {}),
+      ...(finalReason ? { reason: finalReason } : {}),
+      ...(finalTokenUsage ? { tokenUsage: finalTokenUsage } : {}),
     };
   }
 
@@ -620,7 +1159,7 @@ export class CortexClient {
       body: JSON.stringify({
         entityName: noteName,
         entityType: 'Note',
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
       }),
     });
     return res.data?.suggestions ?? [];
@@ -633,7 +1172,7 @@ export class CortexClient {
         seedEntity: seedNoteName,
         seedType: 'Note',
         hops,
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
       }),
     });
     return res.data;
@@ -651,7 +1190,7 @@ export class CortexClient {
       body: JSON.stringify({
         seedEntityId,
         hops,
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
       }),
     });
     return res.data;
@@ -669,7 +1208,7 @@ export class CortexClient {
     if (filePath) {
       for (const type of ['Note', 'Document']) {
         try {
-          const res = await this.req<{ success: boolean; data: { entities: any[] } }>(
+          const res = await this.req<{ success: boolean; data: { entities: RawGraphEntity[] } }>(
             '/v1/graph/entities/find',
             {
               method: 'POST',
@@ -691,14 +1230,14 @@ export class CortexClient {
     const params = new URLSearchParams({
       q: noteName,
       limit: '5',
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
     });
-    const res = await this.req<{ success: boolean; data: { entities: any[] } }>(
+    const res = await this.req<{ success: boolean; data: { entities: RawGraphEntity[] } }>(
       `/v1/graph/search?${params.toString()}`,
     );
     const list = res.data?.entities ?? [];
     if (list.length === 0) return null;
-    const exact = list.find((e: any) => e.name === noteName);
+    const exact = list.find(e => e.name === noteName);
     return (exact ?? list[0])?.id ?? null;
   }
 
@@ -720,7 +1259,7 @@ export class CortexClient {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
     params.set('offset', String(offset));
-    if (this.settings.workspaceId) params.set('workspaceId', this.settings.workspaceId);
+    if (effectiveWorkspaceId(this.settings)) params.set('workspaceId', effectiveWorkspaceId(this.settings));
 
     if (opts.entityTypes && opts.entityTypes.length === 1) {
       params.set('type', opts.entityTypes[0]);
@@ -737,8 +1276,8 @@ export class CortexClient {
 
     const entities: GraphEntity[] = (res.data?.entities ?? []).map(e => ({
       id: e.id,
-      name: e.name ?? (e as any).properties?.name ?? 'Unknown',
-      type: e.type ?? (e as any).properties?.type ?? 'Entity',
+      name: e.name ?? (e.properties?.name as string | undefined) ?? 'Unknown',
+      type: e.type ?? (e.properties?.type as string | undefined) ?? 'Entity',
       properties: e.properties ?? {},
     }));
 
@@ -748,12 +1287,12 @@ export class CortexClient {
       try {
         const graphParams = new URLSearchParams();
         graphParams.set('limit', String(Math.min(limit, 500)));
-        if (this.settings.workspaceId) graphParams.set('workspaceId', this.settings.workspaceId);
+        if (effectiveWorkspaceId(this.settings)) graphParams.set('workspaceId', effectiveWorkspaceId(this.settings));
         if (opts.entityTypes && opts.entityTypes.length === 1) {
           graphParams.set('type', opts.entityTypes[0]);
         }
         const graphRes = await this.req<{
-          nodes?: Array<any>;
+          nodes?: Array<unknown>;
           links?: Array<{ source: string; target: string; type: string; properties?: Record<string, unknown> }>;
         }>(`/v1/graph?${graphParams.toString()}`, { method: 'GET' });
 
@@ -815,7 +1354,7 @@ export class CortexClient {
    */
   async getEntityTypeCounts(): Promise<EntityTypeCount[]> {
     const params = new URLSearchParams();
-    if (this.settings.workspaceId) params.set('workspaceId', this.settings.workspaceId);
+    if (effectiveWorkspaceId(this.settings)) params.set('workspaceId', effectiveWorkspaceId(this.settings));
 
     const res = await this.req<{
       data?: { entityTypes: Array<{ type: string; count: number }> };
@@ -832,7 +1371,7 @@ export class CortexClient {
    */
   async getGraphStats(): Promise<GraphStats> {
     const params = new URLSearchParams();
-    if (this.settings.workspaceId) params.set('workspaceId', this.settings.workspaceId);
+    if (effectiveWorkspaceId(this.settings)) params.set('workspaceId', effectiveWorkspaceId(this.settings));
     const res = await this.req<{ data: GraphStats }>(`/v1/graph/stats?${params.toString()}`);
     return {
       totalEntities: res.data?.totalEntities ?? 0,
@@ -898,7 +1437,7 @@ export class CortexClient {
    */
   async inboxList(): Promise<InboxItem[]> {
     const qs = new URLSearchParams({
-      workspaceId: this.settings.workspaceId,
+      workspaceId: effectiveWorkspaceId(this.settings),
       vaultId: this.settings.vaultId,
     }).toString();
     const res = await this.req<{ data: { items: InboxItem[] } }>(`/v1/inbox/list?${qs}`);
@@ -911,7 +1450,7 @@ export class CortexClient {
       body: JSON.stringify({
         itemId,
         vaultPath,
-        workspaceId: this.settings.workspaceId,
+        workspaceId: effectiveWorkspaceId(this.settings),
         vaultId: this.settings.vaultId,
       }),
     });
@@ -923,8 +1462,9 @@ export class CortexClient {
  * The shape varies (Notes from Obsidian, ingested docs, entities) — we look
  * at the most useful fields and de-duplicate by source name.
  */
-function extractCitations(raw: any): AskCitation[] {
+function extractCitations(raw: unknown): AskCitation[] {
   if (!raw || typeof raw !== 'object') return [];
+  const env = raw as RawRetrievalEnvelope;
   const out: AskCitation[] = [];
   const seen = new Set<string>();
 
@@ -934,7 +1474,11 @@ function extractCitations(raw: any): AskCitation[] {
     out.push({ source, text: text ?? '', filePath, url });
   };
 
-  for (const doc of raw.documents?.recentDocuments ?? []) {
+  const docsHost = env.documents;
+  const recentDocs: RawRetrievalDocument[] = Array.isArray(docsHost)
+    ? docsHost
+    : docsHost?.recentDocuments ?? [];
+  for (const doc of recentDocs) {
     push(
       doc?.name ?? doc?.filename ?? doc?.title,
       doc?.snippet ?? doc?.summary ?? doc?.description,
@@ -942,7 +1486,7 @@ function extractCitations(raw: any): AskCitation[] {
       doc?.url ?? doc?.youtubeurl,
     );
   }
-  for (const ent of raw.knowledgeGraph?.entities ?? raw.entities ?? []) {
+  for (const ent of env.knowledgeGraph?.entities ?? env.entities ?? []) {
     if (ent?.type === 'Note' || ent?.type === 'Document') {
       push(ent?.name, ent?.properties?.description, ent?.properties?.filePath);
     }
@@ -950,11 +1494,12 @@ function extractCitations(raw: any): AskCitation[] {
   return out.slice(0, 10);
 }
 
-function extractEntities(raw: any): AskEntity[] {
+function extractEntities(raw: unknown): AskEntity[] {
   if (!raw || typeof raw !== 'object') return [];
+  const env = raw as RawRetrievalEnvelope;
   const seen = new Set<string>();
   const out: AskEntity[] = [];
-  const list = raw.knowledgeGraph?.entities ?? raw.entities ?? [];
+  const list: RawRetrievalEntity[] = env.knowledgeGraph?.entities ?? env.entities ?? [];
   for (const e of list) {
     const name = e?.name;
     if (!name) continue;
@@ -971,16 +1516,20 @@ function extractEntities(raw: any): AskEntity[] {
   return out.slice(0, 25);
 }
 
-function extractDocuments(raw: any): AskDocument[] {
+function extractDocuments(raw: unknown): AskDocument[] {
   if (!raw || typeof raw !== 'object') return [];
+  const env = raw as RawRetrievalEnvelope;
   const out: AskDocument[] = [];
   const seen = new Set<string>();
 
   // 1. "Recent documents" — file-upload feature, not enabled on /chat/answer
   //    by default but populated on other endpoints. Keep checking it for
   //    backwards-compat.
-  const recentList = raw.documents?.recentDocuments ?? raw.documents ?? [];
-  for (const d of Array.isArray(recentList) ? recentList : []) {
+  const docsHost = env.documents;
+  const recentList: RawRetrievalDocument[] = Array.isArray(docsHost)
+    ? docsHost
+    : docsHost?.recentDocuments ?? [];
+  for (const d of recentList) {
     const title = d?.title ?? d?.name ?? d?.filename;
     if (!title || seen.has(title)) continue;
     seen.add(title);
@@ -1001,8 +1550,8 @@ function extractDocuments(raw: any): AskDocument[] {
   //    rather than `raw.documents`. Without this branch, chunk-level matches
   //    never reached the UI's Documents panel and ask responses looked like
   //    they had no source material even when retrieval succeeded.
-  const chunks = raw.vectorMemory?.relevantChunks ?? raw.relevantChunks ?? [];
-  for (const c of Array.isArray(chunks) ? chunks : []) {
+  const chunks: RawRetrievalChunk[] = env.vectorMemory?.relevantChunks ?? env.relevantChunks ?? [];
+  for (const c of chunks) {
     // FalkorDB Chunk schema: meta_fileName is the source filename. Older
     // shape variants kept for forward-compat in case the server schema
     // changes again. Strip the .md extension for cleaner display.

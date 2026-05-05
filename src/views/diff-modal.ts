@@ -35,7 +35,7 @@ export class DiffModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.modalEl.addClass('cortex-diff-modal');
-    this.titleEl.setText('Vault ↔ Graph diff');
+    this.titleEl.setText('Vault ↔ graph diff');
 
     this.bodyEl = this.contentEl.createDiv({ cls: 'cortex-diff-body' });
     this.statusEl = this.bodyEl.createDiv({ cls: 'cortex-diff-status' });
@@ -170,12 +170,12 @@ export class DiffModal extends Modal {
     // Footer — refresh + close.
     const footer = this.bodyEl.createDiv({ cls: 'cortex-diff-footer' });
     const refreshBtn = footer.createEl('button', { text: 'Refresh' });
-    refreshBtn.addEventListener('click', async () => {
+    refreshBtn.addEventListener('click', () => { void (async () => {
       this.cancelToken = { aborted: false };
       this.bodyEl.empty();
       this.statusEl = this.bodyEl.createDiv({ cls: 'cortex-diff-status', text: 'Loading…' });
       await this.onOpen();
-    });
+    })(); });
     const closeBtn = footer.createEl('button', { text: 'Close', cls: 'mod-cta' });
     closeBtn.addEventListener('click', () => this.close());
   }
@@ -228,7 +228,7 @@ export class DiffModal extends Modal {
         if (file) {
           link.addEventListener('click', evt => {
             evt.preventDefault();
-            this.app.workspace.getLeaf(false).openFile(file);
+            void this.app.workspace.getLeaf(false).openFile(file);
             this.close();
           });
         }
@@ -238,7 +238,7 @@ export class DiffModal extends Modal {
         if (target) {
           link.addEventListener('click', evt => {
             evt.preventDefault();
-            this.app.workspace.getLeaf(false).openFile(target);
+            void this.app.workspace.getLeaf(false).openFile(target);
             this.close();
           });
         } else {

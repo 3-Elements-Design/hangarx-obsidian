@@ -9,6 +9,7 @@ import {
   type BridgeConfig, type ConnectResult,
 } from './services/agent-connect';
 import { startSignIn } from './services/oauth-flow';
+import { confirmModal } from './services/confirm-modal';
 import { ReadmeModal } from './views/readme-modal';
 
 export type ConnectionMode = 'cloud' | 'local';
@@ -126,9 +127,17 @@ services:
       XAI_API_KEY: \${XAI_API_KEY:-}
       COHERE_API_KEY: \${COHERE_API_KEY:-}
       JINA_API_KEY: \${JINA_API_KEY:-}
+      PERPLEXITY_API_KEY: \${PERPLEXITY_API_KEY:-}
+      TAVILY_API_KEY: \${TAVILY_API_KEY:-}
       OLLAMA_BASE_URL: \${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       MCP_ALLOW_UNAUTHENTICATED: "true"
       BOOTSTRAP_SECRET: cortex-local
+      # CORS allowlist — must include the Obsidian plugin's origins or
+      # the SSE streaming chat (and any browser-CORS-respecting fetch
+      # from the plugin) will be rejected at preflight. Desktop Obsidian
+      # uses app://obsidian.md; mobile uses capacitor://localhost. The
+      # localhost entries cover the dashboard at :3000 / :3001.
+      CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,app://obsidian.md,capacitor://localhost,http://localhost"
       # Skip per-file Louvain community detection. The single-user Falkor
       # graph times out on this for vaults >1k entities and the resulting
       # communities aren't surfaced anywhere in the plugin UI. Cloud
@@ -203,10 +212,38 @@ export interface CortexSettings {
    *  stay highlighted. Off by default; user can toggle from the chat
    *  composer's gear menu or here in settings. */
   autoShowAnswerOnGraph: boolean;
+  /** Chat behavior:
+   *    'rag'   — single-shot retrieval-augmented generation (legacy, fastest, default)
+   *    'agent' — server runs the canonical `runAgent` harness with tool-calling
+   *              (knowledge_graph_search, cortex_paths, optionally web_search).
+   *              Higher latency, much smarter on multi-step questions. */
+  chatAgentMode: 'rag' | 'agent';
+  /** When true (default), simple fact-lookup queries skip the agent loop
+   *  and route through the single-pass RAG path even when chatAgentMode
+   *  is 'agent'. Big perceived-latency win for ~70% of queries. Set to
+   *  false to force every query through the agent loop. */
+  chatAutoFastPath: boolean;
+  /** When chatAgentMode is 'agent', also expose web_search + web_scrape to
+   *  the agent. Off by default — privacy-conscious users may not want their
+   *  queries hitting Perplexity. */
+  chatAgentWebSearch: boolean;
+  /** L8 — skill pack the streaming agent uses. The pack supplies the
+   *  system prompt, default tool list, and bounds. `obsidian-chat` is the
+   *  vault-aware default; `vault-qa` skips the web entirely; `multi-hop`
+   *  enables `delegate` for sub-agents on hard questions. */
+  chatAgentSkill: 'obsidian-chat' | 'vault-qa' | 'multi-hop';
+  /** When on, agent-mode chats use the SSE streaming endpoint
+   *  (`/v1/agent/run/stream`) so per-iteration / per-tool-call cards
+   *  render live in the chat panel. Off → non-streaming POST that waits
+   *  for the full result. Default on for agent mode. */
+  chatStream: boolean;
   /** Timestamp of the first time the onboarding modal was opened. Unset
    *  on a fresh install. Used to gate the auto-open on plugin load — the
    *  modal opens once, then the user has to invoke it via the command. */
   onboardingShownAt?: number;
+  /**  User explicitly dismissed the persistent onboarding side panel.
+   *   Reachable again via the command palette regardless. */
+  onboardingDismissed?: boolean;
 
   // MCP server (the agent-memory wedge)
   mcpEnabled: boolean;
@@ -255,6 +292,16 @@ export interface CortexSettings {
     cohere?: string;
     /** Reranker provider, not a chat LLM. */
     jina?: string;
+    /** Web-search backend used by the agent's `web_search` tool when the
+     *  active LLM provider doesn't have native web search (or as a
+     *  fallback). Setting this populates `PERPLEXITY_API_KEY` in the
+     *  local docker-compose YAML. */
+    perplexity?: string;
+    /** Agent-optimized web-search backend (preferred over Perplexity for
+     *  agent loops — faster, cheaper per call, 1k/month free tier with
+     *  no card required). Populates `TAVILY_API_KEY` in the local
+     *  docker-compose YAML. */
+    tavily?: string;
   };
   embeddingPreset: EmbeddingPreset;
 
@@ -279,6 +326,11 @@ export const DEFAULT_SETTINGS: CortexSettings = {
   showRelatedPane: true,
   inlineSuggestionsEnabled: true,
   autoShowAnswerOnGraph: false,
+  chatAgentMode: 'agent',
+  chatAutoFastPath: true,
+  chatAgentWebSearch: false,
+  chatAgentSkill: 'obsidian-chat',
+  chatStream: true,
   mcpEnabled: false,
   mcpPort: 7474,
   mcpToken: '',
@@ -325,16 +377,51 @@ export class CortexSettingTab extends PluginSettingTab {
     const s = this.plugin.settings;
     const mode = s.connectionMode;
 
-    /* ── 1. Settings ──────────────────────────────────────────────── */
+    /* ──────────────────────────────────────────────────────────────────
+       Milestone-1 IA: 5 user-goal sections, top→down by frequency × stakes.
+       Order intentionally puts Connection first (highest-stakes) and
+       Power features last (rarely visited). Each section header is
+       followed by a one-line preview of the section's current state so
+       the user can read status without expanding anything.
 
-    containerEl.createEl('h3', { text: 'Settings' });
+       Milestone 2 added: search filter at the top, "Common tasks" entry-
+       point row, and `<details>` wrapping for advanced clusters via
+       renderAdvanced(). Most users land on the page and never expand
+       any of those — average visible-control count drops from 32 to ~12.
+
+       Milestone 3 added: status badges per section (✅/⚠/✗), inline
+       dependency warnings (e.g. "Allow web search" warns when no key),
+       beta pills on every beta thing, and the search input that
+       hides non-matching settings live as the user types.
+       ────────────────────────────────────────────────────────────────── */
+
+    // Search bar — hides any .setting-item / .cortex-advanced whose
+    // name+desc don't match the query. Keeps section headers visible
+    // so the user can see which section a remaining match lives in.
+    this.renderSearchBar(containerEl);
+
+    // Common tasks row — bridges users who skipped the onboarding modal
+    // by giving direct entry points to the four most common goals.
+    this.renderCommonTasksRow(containerEl, s, mode);
+
+    /* ── 1. Connection (was "Settings") ──────────────────────────── */
+
+    const connectionStatus: 'ok' | 'warn' | 'error' = mode === 'cloud'
+      ? (s.apiKey ? 'ok' : 'warn')
+      : 'ok';
+    this.renderSectionHeader(containerEl, 'Connection',
+      mode === 'cloud'
+        ? `Cloud · ${s.apiKey ? `signed in${s.workspaceId ? ` · ws_${s.workspaceId.slice(0, 6)}` : ''}` : 'sign-in needed'}`
+        : `Local · ${s.apiUrl}`,
+      connectionStatus,
+    );
 
     new Setting(containerEl)
-      .setName('Mode')
-      .setDesc('Choose where HangarX runs. Cloud uses the hosted API. Local runs everything on your machine via Docker.')
+      .setName('Where HangarX runs')
+      .setDesc('Cloud uses the hosted API. Local runs everything on your machine via Docker.')
       .addDropdown(d => d
-        .addOption('cloud', '☁️  Cloud (HangarX hosted)')
-        .addOption('local', '🏠  Local (Docker)')
+        .addOption('cloud', '☁️  cloud (HangarX hosted)')
+        .addOption('local', '🏠  Local (docker)')
         .setValue(mode)
         .onChange(async v => {
           s.connectionMode = v as ConnectionMode;
@@ -352,19 +439,19 @@ export class CortexSettingTab extends PluginSettingTab {
       this.renderLocalConnection(containerEl, s);
     }
 
+    /* ── 2. Sync (merged "What to sync" + "Sync behavior") ────────── */
 
-    /* ── 2. Agents ─────────────────────────────────────────────────── */
+    const includedFolderCount = this.plugin.settings.includeFolders.length;
+    // Sync needs an authenticated connection in cloud mode to actually
+    // do anything — surface that as a warn rather than letting the user
+    // silently configure folders that won't push.
+    const syncStatus: 'ok' | 'warn' = (mode === 'cloud' && !s.apiKey) ? 'warn' : 'ok';
+    this.renderSectionHeader(containerEl, 'Sync',
+      `${includedFolderCount === 0 ? 'all folders' : `${includedFolderCount} folder${includedFolderCount === 1 ? '' : 's'}`} · attachments ${this.plugin.settings.syncAttachments ? 'on' : 'off'} · sync on startup ${this.plugin.settings.syncOnStartup ? 'on' : 'off'}`,
+      syncStatus,
+    );
 
-    this.renderAgentsSection(containerEl);
-
-    /* ── 2b. LLM (runtime) ─────────────────────────────────────────── */
-
-    this.renderLlmRuntimeSection(containerEl);
-
-    /* ── 3. What to sync ───────────────────────────────────────────── */
-
-    containerEl.createEl('h3', { text: 'What to sync' });
-
+    // Defaults — the two controls 95% of users actually touch.
     new Setting(containerEl)
       .setName('Include folders')
       .setDesc('Comma-separated folder prefixes. Empty = include everything not excluded.')
@@ -376,36 +463,41 @@ export class CortexSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Exclude patterns')
-      .setDesc('Comma-separated path prefixes to skip when pushing to HangarX.')
-      .addText(t => t
-        .setValue(this.plugin.settings.excludePatterns.join(','))
-        .onChange(async v => {
-          this.plugin.settings.excludePatterns = v.split(',').map(x => x.trim()).filter(Boolean);
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Sync attachments')
-      .setDesc('Ingest images, PDFs, and other binaries referenced by your notes.')
-      .addToggle(t => t
-        .setValue(this.plugin.settings.syncAttachments)
-        .onChange(async v => { this.plugin.settings.syncAttachments = v; await this.plugin.saveSettings(); }));
-
-    /* ── 4. Sync behavior ─────────────────────────────────────────── */
-
-    containerEl.createEl('h3', { text: 'Sync behavior' });
-
-    new Setting(containerEl)
       .setName('Sync on startup')
       .setDesc('Run a full vault sync when Obsidian launches. Skips files unchanged since the last sync.')
       .addToggle(t => t
         .setValue(this.plugin.settings.syncOnStartup)
-        .onChange(async v => { this.plugin.settings.syncOnStartup = v; await this.plugin.saveSettings(); }));
+        .onChange(async v => { this.plugin.settings.syncOnStartup = v; await this.plugin.saveSettings(); this.display(); }));
 
-    /* ── 4b. Import cloud graph ───────────────────────────────────── */
+    // Advanced — exclude patterns + attachments toggle. Most users
+    // don't touch these; collapsed by default.
+    this.renderAdvanced(containerEl, 'Sync — advanced', (host) => {
+      new Setting(host)
+        .setName('Exclude patterns')
+        .setDesc('Comma-separated path prefixes to skip when pushing to HangarX.')
+        .addText(t => t
+          .setValue(this.plugin.settings.excludePatterns.join(','))
+          .onChange(async v => {
+            this.plugin.settings.excludePatterns = v.split(',').map(x => x.trim()).filter(Boolean);
+            await this.plugin.saveSettings();
+          }));
 
-    containerEl.createEl('h3', { text: 'Import Cortex graph' });
+      new Setting(host)
+        .setName('Sync attachments')
+        .setDesc('Ingest images, pdfs, and other binaries referenced by your notes.')
+        .addToggle(t => t
+          .setValue(this.plugin.settings.syncAttachments)
+          .onChange(async v => { this.plugin.settings.syncAttachments = v; await this.plugin.saveSettings(); this.display(); }));
+    });
+
+    /* ── 3. Knowledge graph (was "Import Cortex graph") ──────────── */
+
+    this.renderSectionHeader(containerEl, 'Knowledge graph',
+      this.plugin.settings.graphPullEnrichSourceNotes
+        ? `pulling to ${this.plugin.settings.graphPullFolder} · enriching source notes`
+        : `pulling to ${this.plugin.settings.graphPullFolder}`,
+      'ok',
+    );
 
     const importDesc = containerEl.createEl('p', { cls: 'setting-item-description' });
     importDesc.setText(
@@ -414,38 +506,46 @@ export class CortexSettingTab extends PluginSettingTab {
       'Re-running is incremental — only changed entities are rewritten.',
     );
 
-    new Setting(containerEl)
-      .setName('Graph folder')
-      .setDesc('Where pulled entity files live. Folder is excluded from sync to prevent feedback loops.')
-      .addText(t => t
-        .setValue(this.plugin.settings.graphPullFolder)
-        .setPlaceholder('.cortex/graph')
-        .onChange(async v => {
-          this.plugin.settings.graphPullFolder = v.trim() || '.cortex/graph';
-          await this.plugin.saveSettings();
-        }));
+    // Knowledge-graph configuration is set-once for most users — folder
+    // path, entity-type filter, frontmatter enrichment toggle. Hide
+    // them under Advanced so the primary "Run import" buttons below
+    // are the visual anchor of this section.
+    this.renderAdvanced(containerEl, 'Graph import — advanced', (host) => {
+      new Setting(host)
+        .setName('Graph folder')
+        .setDesc('Where pulled entity files live. Folder is excluded from sync to prevent feedback loops.')
+        .addText(t => t
+          .setValue(this.plugin.settings.graphPullFolder)
+          .setPlaceholder('.cortex/graph')
+          .onChange(async v => {
+            this.plugin.settings.graphPullFolder = v.trim() || '.cortex/graph';
+            await this.plugin.saveSettings();
+            this.display();
+          }));
 
-    new Setting(containerEl)
-      .setName('Entity types')
-      .setDesc('Comma-separated list of entity types to pull. Leave empty to pull a sensible default set (Concept, Person, Organization, Topic, Location, Event, …).')
-      .addText(t => t
-        .setValue(this.plugin.settings.graphPullEntityTypes.join(', '))
-        .setPlaceholder('Concept, Person, Topic')
-        .onChange(async v => {
-          this.plugin.settings.graphPullEntityTypes = v
-            .split(',').map(s => s.trim()).filter(Boolean);
-          await this.plugin.saveSettings();
-        }));
+      new Setting(host)
+        .setName('Entity types')
+        .setDesc('Comma-separated list of entity types to pull. Leave empty to pull a sensible default set (concept, person, organization, topic, location, event, …).')
+        .addText(t => t
+          .setValue(this.plugin.settings.graphPullEntityTypes.join(', '))
+          .setPlaceholder('Concept, person, topic')
+          .onChange(async v => {
+            this.plugin.settings.graphPullEntityTypes = v
+              .split(',').map(s => s.trim()).filter(Boolean);
+            await this.plugin.saveSettings();
+          }));
 
-    new Setting(containerEl)
-      .setName('Enrich source notes')
-      .setDesc('Add `cortex_entities` frontmatter to your existing notes that mention pulled entities — creates bidirectional wikilinks.')
-      .addToggle(t => t
-        .setValue(this.plugin.settings.graphPullEnrichSourceNotes)
-        .onChange(async v => {
-          this.plugin.settings.graphPullEnrichSourceNotes = v;
-          await this.plugin.saveSettings();
-        }));
+      new Setting(host)
+        .setName('Enrich source notes')
+        .setDesc('Add `cortex_entities` frontmatter to your existing notes that mention pulled entities — creates bidirectional wikilinks.')
+        .addToggle(t => t
+          .setValue(this.plugin.settings.graphPullEnrichSourceNotes)
+          .onChange(async v => {
+            this.plugin.settings.graphPullEnrichSourceNotes = v;
+            await this.plugin.saveSettings();
+            this.display();
+          }));
+    });
 
     new Setting(containerEl)
       .setName('Run import')
@@ -461,13 +561,19 @@ export class CortexSettingTab extends PluginSettingTab {
         .setCta()
         .onClick(() => this.plugin.runGraphPull()));
 
-    /* ── 5. Interface ─────────────────────────────────────────────── */
+    /* ── 4. Chat & Agents (was "Interface" + LLM runtime fold-in) ── */
 
-    containerEl.createEl('h3', { text: 'Interface' });
+    const agentBits = this.plugin.settings.chatAgentMode === 'agent'
+      ? `${this.plugin.settings.chatAgentSkill} · streaming ${this.plugin.settings.chatStream ? 'on' : 'off'}${this.plugin.settings.chatAgentWebSearch ? ' · web search on' : ''}`
+      : 'single-shot RAG';
+    this.renderSectionHeader(containerEl, 'Chat & Agents',
+      `${this.plugin.settings.chatAgentMode} · ${agentBits}`,
+      'ok',
+    );
 
     new Setting(containerEl)
       .setName('Default right pane')
-      .setDesc('Which sidebar auto-opens on startup. "Ask your vault" is always-on chat over your knowledge graph; "Related notes" surfaces semantically similar notes for the current file.')
+      .setDesc('Which sidebar auto-opens on startup. "ask your vault" is always-on chat over your knowledge graph; "Related notes" surfaces semantically similar notes for the current file.')
       .addDropdown(d => d
         .addOption('chat', 'Ask your vault')
         .addOption('related', 'Related notes')
@@ -482,45 +588,318 @@ export class CortexSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Inline link suggestions')
-      .setDesc('Show ghost-text [[wikilink]] suggestions while typing — driven by entity matches in your graph. Tab to accept, Esc to dismiss.')
+      .setDesc('Show ghost-text [[wikilink]] suggestions while typing — driven by entity matches in your graph. Tab to accept, esc to dismiss.')
       .addToggle(t => t
         .setValue(this.plugin.settings.inlineSuggestionsEnabled)
         .onChange(async v => { this.plugin.settings.inlineSuggestionsEnabled = v; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
       .setName('Auto-highlight chat answers on graph')
-      .setDesc('After every chat answer, automatically push its cited entities into Obsidian\'s graph view filter — non-matching nodes dim, matching ones stay highlighted. Toggle is also accessible from the "Show on graph" button on each answer.')
+      .setDesc('After every chat answer, automatically push its cited entities into Obsidian\'s graph view filter — non-matching nodes dim, matching ones stay highlighted. Toggle is also accessible from the "show on graph" button on each answer.')
       .addToggle(t => t
         .setValue(this.plugin.settings.autoShowAnswerOnGraph)
         .onChange(async v => { this.plugin.settings.autoShowAnswerOnGraph = v; await this.plugin.saveSettings(); }));
 
+    new Setting(containerEl)
+      .setName('Chat mode')
+      .setDesc('RAG (default) is single-shot retrieval — fastest, simplest. Agent uses the server-side tool-calling harness: the LLM decides which tools to call (knowledge graph search, multi-hop paths, optionally web search), iterates, and synthesizes — slower but much better on multi-step questions.')
+      .addDropdown(d => d
+        .addOption('rag', 'RAG (single-shot, default)')
+        .addOption('agent', 'Agent (tool-calling, beta)')
+        .setValue(this.plugin.settings.chatAgentMode)
+        .onChange(async v => {
+          this.plugin.settings.chatAgentMode = v as 'rag' | 'agent';
+          await this.plugin.saveSettings();
+          // Re-render to show/hide the web-search sub-toggle.
+          this.display();
+        }));
+
+    if (this.plugin.settings.chatAgentMode === 'agent') {
+      // Beta pill cluster + agent-mode dependency warnings live inside
+      // a labeled "Agent options" block so the three sub-toggles read
+      // as one decision, not three peer rows. Auto-open since the user
+      // explicitly chose agent mode above.
+      this.renderAdvanced(containerEl, 'Agent options (beta)',
+        (host) => {
+          const skillSetting = new Setting(host)
+            .setName('Agent skill pack')
+            .setDesc('Reusable bundle of system prompt + default tools + bounds. "Obsidian chat" is vault-aware with optional web fallback. "vault q&a" stays inside your knowledge graph. "multi-hop" enables sub-agents for hard, decomposable questions.')
+            .addDropdown(d => d
+              .addOption('obsidian-chat', 'Obsidian chat (default)')
+              .addOption('vault-qa', 'Vault q&a (no web)')
+              .addOption('multi-hop', 'Multi-hop research (sub-agents)')
+              .setValue(this.plugin.settings.chatAgentSkill)
+              .onChange(async v => {
+                this.plugin.settings.chatAgentSkill = v as 'obsidian-chat' | 'vault-qa' | 'multi-hop';
+                await this.plugin.saveSettings();
+                this.display();
+              }));
+          this.renderBetaPill(skillSetting.nameEl);
+
+          const streamSetting = new Setting(host)
+            .setName('Stream agent responses')
+            .setDesc('When on, agent runs stream live — per-iteration progress, tool-call cards, and the final answer all render as they happen.')
+            .addToggle(t => t
+              .setValue(this.plugin.settings.chatStream)
+              .onChange(async v => { this.plugin.settings.chatStream = v; await this.plugin.saveSettings(); }));
+          this.renderBetaPill(streamSetting.nameEl);
+
+          new Setting(host)
+            .setName('Allow web search in agent chat')
+            .setDesc('When on, the agent can call web_search and web_scrape for current external information. Off by default — privacy-conscious users may not want their chat queries hitting the public web.')
+            .addToggle(t => t
+              .setValue(this.plugin.settings.chatAgentWebSearch)
+              .onChange(async v => { this.plugin.settings.chatAgentWebSearch = v; await this.plugin.saveSettings(); this.display(); }));
+          // Dynamic dependency hint — Milestone B replaced the
+          // hard-wired "needs PERPLEXITY_API_KEY" message with a live
+          // probe of the server: the resolver tells us which backend
+          // will actually serve the next call (provider-native vs.
+          // Perplexity vs. nothing) and whether it's configured.
+          if (this.plugin.settings.chatAgentWebSearch) {
+            const hint = host.createDiv({ cls: 'cortex-dep-hint' });
+            hint.setText('Checking backend…');
+            void this.plugin.client.getWebSearchStatus()
+              .then((status: import('./cortex-client').WebSearchStatus) =>
+                hint.setText(this.formatWebSearchHint(status)))
+              .catch(() => hint.setText('Cannot reach server to confirm web-search backend. Open the dashboard to verify.'));
+          }
+        },
+        { open: true },
+      );
+    }
+
+    // Runtime LLM provider/model picker — chat-adjacent, advanced cluster.
+    this.renderAdvanced(containerEl, 'Runtime LLM (BYOK)',
+      (host) => this.renderLlmRuntimeSection(host),
+    );
+
+    /* ── 5. Power features (was top-level "Agents" / MCP) ──────── */
+
+    this.renderSectionHeader(containerEl, 'Power features',
+      this.plugin.settings.mcpEnabled
+        ? `local MCP server on :${this.plugin.settings.mcpPort}`
+        : 'local MCP server off',
+      this.plugin.settings.mcpEnabled ? 'ok' : null,
+    );
+    // Wrap MCP/agents bridge stuff in an advanced disclosure — power
+    // users opt in. Kept open if mcpEnabled is already on so the
+    // running server's controls aren't hidden.
+    this.renderAdvanced(containerEl, 'MCP server & agent bridges',
+      (host) => this.renderAgentsSection(host),
+      { open: this.plugin.settings.mcpEnabled },
+    );
+
     /* ── 6. Help ──────────────────────────────────────────────────── */
 
-    containerEl.createEl('h3', { text: 'Help' });
+    new Setting(containerEl).setName("Help").setHeading();
 
     new Setting(containerEl)
       .setName('Onboarding')
-      .setDesc('Replay the 3-step welcome modal — connect, sync, and try a question.')
+      .setDesc('Open the persistent Get-started panel — connect, sync, run a query, connect external agents.')
       .addButton(b => b
-        .setButtonText('Show onboarding')
+        .setButtonText('Open onboarding panel')
         .onClick(async () => {
-          // Lazy import keeps the cost off the settings render. Don't reset
-          // `onboardingShownAt` — that flag is for the auto-open gate, not
-          // for tracking whether the user has *seen* the modal.
-          const { OnboardingModal } = await import('./views/onboarding-modal');
-          new OnboardingModal(this.plugin.app, this.plugin).open();
+          // Clear the dismiss flag so the panel re-opens cleanly even if
+          // the user previously dismissed it.
+          if (this.plugin.settings.onboardingDismissed) {
+            this.plugin.settings.onboardingDismissed = false;
+            await this.plugin.saveSettings();
+          }
+          await this.plugin.activateOnboardingView();
         }));
 
     new Setting(containerEl)
       .setName('Documentation')
       .setDesc('Quick start, agent setup, troubleshooting, and the full plugin guide.')
       .addButton(b => b
-        .setButtonText('View README')
+        .setButtonText('View readme')
         .onClick(() => new ReadmeModal(this.app).open()))
       .addButton(b => b
         .setButtonText('Open online')
         .setCta()
-        .onClick(() => window.open('https://app.hangarx.ai/obsidian', '_blank')));
+        .onClick(() => window.open('https://app.HangarX.ai/obsidian', '_blank')));
+  }
+
+  /**
+   * Section-header helper. Renders a single h3 followed by a one-line
+   * "preview" of the section's current state (e.g. "Cloud · signed in
+   * · ws_abc123") so the user can read status without expanding any
+   * control.
+   *
+   * Milestone 3 added the optional `status` arg — `'ok' | 'warn' |
+   * 'error'` paints a colored dot before the title. Use `'warn'` for
+   * config that's incomplete but won't break things, `'error'` for
+   * config that prevents the section from working at all.
+   */
+  private renderSectionHeader(
+    parent: HTMLElement,
+    title: string,
+    preview: string,
+    status: 'ok' | 'warn' | 'error' | null = null,
+  ): void {
+    const wrap = parent.createDiv({ cls: 'cortex-section-header' });
+    const titleRow = wrap.createDiv({ cls: 'cortex-section-title-row' });
+    if (status) {
+      const dot = titleRow.createSpan({ cls: `cortex-section-dot is-${status}` });
+      dot.setAttribute('aria-label', `Status: ${status}`);
+    }
+    // Render a plain styled span instead of Obsidian's Setting → setHeading()
+    // wrapper. The wrapper introduced enough nested DOM (.setting-item →
+    // .setting-item-info → .setting-item-name) with implicit padding /
+    // line-heights that the dot couldn't be reliably centered against
+    // the visible glyph height. Plain element gives us full control.
+    titleRow.createSpan({ cls: 'cortex-section-title-text', text: title });
+    if (preview) {
+      wrap.createDiv({ cls: 'cortex-section-preview', text: preview });
+    }
+  }
+
+  /**
+   * Wrap an "advanced" cluster of settings inside a collapsed
+   * <details> block. Default closed — power users opt in. The label
+   * doubles as the disclosure summary so the layout stays clean.
+   */
+  private renderAdvanced(
+    parent: HTMLElement,
+    label: string,
+    body: (host: HTMLElement) => void,
+    opts: { open?: boolean } = {},
+  ): void {
+    const details = parent.createEl('details', { cls: 'cortex-advanced' });
+    if (opts.open) details.setAttribute('open', '');
+    const summary = details.createEl('summary', { cls: 'cortex-advanced-summary' });
+    summary.createSpan({ cls: 'cortex-advanced-chevron', text: '▸' });
+    summary.createSpan({ cls: 'cortex-advanced-label', text: label });
+    const host = details.createDiv({ cls: 'cortex-advanced-body' });
+    body(host);
+  }
+
+  /**
+   * Add a small "beta" pill next to a setting name. Pure visual signal
+   * so users know which features are still hardening.
+   */
+  private renderBetaPill(parent: HTMLElement, label = 'beta'): void {
+    parent.createSpan({ cls: 'cortex-beta-pill', text: label });
+  }
+
+  /**
+   * Search/filter input at the top of the page. As the user types, any
+   * .setting-item, .cortex-advanced, or .cortex-section-header whose
+   * combined text doesn't include the query is hidden. Matching
+   * controls cause their parent advanced disclosure to auto-expand so
+   * the result is actually visible.
+   */
+  private renderSearchBar(containerEl: HTMLElement): void {
+    const wrap = containerEl.createDiv({ cls: 'cortex-settings-search' });
+    const input = wrap.createEl('input', {
+      type: 'search',
+      attr: { placeholder: 'Search settings…', 'aria-label': 'Search settings' },
+      cls: 'cortex-settings-search-input',
+    });
+    input.addEventListener('input', () => {
+      const q = input.value.trim().toLowerCase();
+      const items = containerEl.querySelectorAll<HTMLElement>('.setting-item');
+      const advancedBlocks = containerEl.querySelectorAll<HTMLElement>('.cortex-advanced');
+      // First pass: per-item show/hide based on text match. Uses the
+      // .is-hidden utility class instead of an inline style so the
+      // obsidianmd ESLint plugin's no-style-assignment rule passes.
+      items.forEach((el) => {
+        if (!q) {
+          el.removeClass('is-hidden');
+          return;
+        }
+        el.toggleClass('is-hidden', !el.innerText.toLowerCase().includes(q));
+      });
+      // Auto-expand any advanced block that contains a matching item.
+      advancedBlocks.forEach((det) => {
+        if (!q) return;
+        const hasMatch = Array.from(det.querySelectorAll<HTMLElement>('.setting-item'))
+          .some(item => !item.classList.contains('is-hidden'));
+        if (hasMatch) det.setAttribute('open', '');
+      });
+    });
+  }
+
+  /**
+   * "Common tasks" row at the top of the page — direct entry points
+   * for the four most common things people open settings to do. Each
+   * task scrolls to its anchor section by id; the section h3s carry
+   * a `data-anchor` attribute matched here.
+   */
+  private renderCommonTasksRow(
+    containerEl: HTMLElement,
+    s: CortexSettings,
+    mode: ConnectionMode,
+  ): void {
+    const tasksWrap = containerEl.createDiv({ cls: 'cortex-common-tasks' });
+    tasksWrap.createDiv({ cls: 'cortex-common-tasks-label', text: 'Common tasks' });
+    const buttons = tasksWrap.createDiv({ cls: 'cortex-common-tasks-row' });
+
+    const mkBtn = (label: string, onClick: () => void): HTMLButtonElement => {
+      const b = buttons.createEl('button', { cls: 'cortex-common-tasks-btn', text: label });
+      b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+      return b;
+    };
+
+    const isAuthed = mode === 'cloud' ? !!s.apiKey : true;
+    const labelConnect = mode === 'cloud' && !isAuthed ? 'Sign in' : 'Connection';
+
+    // Helper — closes the settings modal/tab so the user actually sees
+    // the thing they just asked for. Settings runs inside Obsidian's
+    // SettingsTab which sits behind a backdrop; without dismissing it
+    // the user clicks "Try a chat" and stares at the same settings UI
+    // wondering why nothing happened. Cast the SettingTab → its parent
+    // Setting modal which has `.close()` from Obsidian's Modal API.
+    const closeSettings = () => {
+      const setting = (this.plugin.app as unknown as {
+        setting: { close?: () => void };
+      }).setting;
+      setting?.close?.();
+    };
+
+    // Run a real command by id. Obsidian command ids are
+    // `<plugin-id>:<command-id>` — our plugin id is `hangarx`.
+    const runCommand = (id: string) => {
+      void (this.plugin.app as unknown as {
+        commands: { executeCommandById(id: string): boolean };
+      }).commands.executeCommandById(id);
+    };
+
+    mkBtn(labelConnect, () => this.scrollToSection('Connection'));
+    mkBtn('Run a sync', () => {
+      // Open the sync modal so the user can pick scope + see progress,
+      // rather than firing a silent background sync.
+      closeSettings();
+      runCommand('hangarx:cortex-1-sync');
+    });
+    mkBtn('Try a chat', () => {
+      // Open the chat side panel — the most common thing settings
+      // visitors actually want next. Closes settings first so the
+      // panel becomes visible (otherwise it activates behind the
+      // settings modal).
+      closeSettings();
+      runCommand('hangarx:cortex-ask');
+    });
+    mkBtn('Connect agents (MCP)', () => this.scrollToSection('Power features'));
+  }
+
+  /** Scroll a section header into view by its title text. Used by the
+   *  Common-tasks buttons. Falls back gracefully if the title isn't
+   *  found (e.g. during a partial render). */
+  private scrollToSection(title: string): void {
+    const headers = this.containerEl.querySelectorAll<HTMLElement>('.cortex-section-header h3');
+    for (const h of Array.from(headers)) {
+      if (h.textContent === title) {
+        h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Brief highlight pulse so the user's eye lands on the right place.
+        const wrap = h.closest('.cortex-section-header');
+        if (wrap) {
+          wrap.classList.add('is-flash');
+          window.setTimeout(() => wrap.classList.remove('is-flash'), 1200);
+        }
+        return;
+      }
+    }
   }
 
   /**
@@ -550,13 +929,13 @@ export class CortexSettingTab extends PluginSettingTab {
       });
       const introActions = intro.createDiv({ cls: 'cortex-cloud-intro-actions' });
       const signInBtn = introActions.createEl('button', {
-        text: 'Sign in with HangarX',
+        text: 'Sign in with hangarx',
         cls: 'mod-cta',
       });
-      signInBtn.addEventListener('click', () => this.startInteractiveSignIn(signInBtn, s));
+      signInBtn.addEventListener('click', () => { void this.startInteractiveSignIn(signInBtn, s); });
       const dashBtn = introActions.createEl('button', { text: 'Open dashboard ↗' });
       dashBtn.addEventListener('click', () => {
-        window.open('https://app.hangarx.ai/settings?tab=api-keys', '_blank');
+        window.open('https://app.HangarX.ai/settings?tab=api-keys', '_blank');
       });
 
       // Manual-paste fallback fields stay visible — pre-auth users may already have a key.
@@ -573,15 +952,15 @@ export class CortexSettingTab extends PluginSettingTab {
     const actions = compact.createDiv({ cls: 'cortex-cloud-compact-actions' });
     const dashBtn = actions.createEl('button', { text: 'Open dashboard ↗' });
     dashBtn.addEventListener('click', () => {
-      window.open('https://app.hangarx.ai/settings?tab=api-keys', '_blank');
+      window.open('https://app.HangarX.ai/settings?tab=api-keys', '_blank');
     });
     const signOutBtn = actions.createEl('button', { text: 'Sign out' });
-    signOutBtn.addEventListener('click', async () => {
+    signOutBtn.addEventListener('click', () => { void (async () => {
       s.apiKey = '';
       s.workspaceId = '';
       await this.plugin.saveSettings();
       this.display();
-    });
+    })(); });
 
     const advanced = containerEl.createEl('details', { cls: 'cortex-cloud-advanced' });
     advanced.createEl('summary', { text: 'Advanced — API key, workspace ID' });
@@ -655,8 +1034,8 @@ export class CortexSettingTab extends PluginSettingTab {
       statusText.textContent = this.lastHealthDetail ||
         (ok ? `Connected to ${s.apiUrl}` : `Cannot reach ${s.apiUrl}`);
       retryBtn.removeAttribute('disabled');
-      setupCard.style.display = ok ? 'none' : '';
-      runningCard.style.display = ok ? '' : 'none';
+      setupCard.toggleClass('is-hidden', ok);
+      runningCard.toggleClass('is-hidden', !ok);
       // Re-render Stack health from the latest probe response.
       this.renderStackHealthPanel(stackHealthWrap, s, ok);
     };
@@ -682,8 +1061,8 @@ export class CortexSettingTab extends PluginSettingTab {
    */
   private renderLocalSetupCard(containerEl: HTMLElement, s: CortexSettings): HTMLElement {
     const hero = containerEl.createDiv({ cls: 'cortex-local-hero' });
-    hero.createEl('div', { cls: 'cortex-local-hero-title', text: 'Set up HangarX in three steps' });
-    hero.createEl('div', {
+    hero.createDiv({ cls: 'cortex-local-hero-title', text: 'Set up HangarX in three steps' });
+    hero.createDiv({
       cls: 'cortex-local-hero-sub',
       text: 'HangarX runs Postgres, FalkorDB, and the Cortex API on your machine via Docker. ' +
             'Pulls images from Docker Hub — no source code needed.',
@@ -695,15 +1074,15 @@ export class CortexSettingTab extends PluginSettingTab {
 
     // 1. Add a provider key — gate that's actually load-bearing.
     const step1 = hero.createDiv({ cls: 'cortex-local-hero-step' });
-    step1.createEl('span', { cls: 'cortex-local-hero-step-num', text: '1.' });
+    step1.createSpan({ cls: 'cortex-local-hero-step-num', text: '1.' });
     const step1Body = step1.createDiv({ cls: 'cortex-local-hero-step-body' });
-    step1Body.createEl('div', {
+    step1Body.createDiv({
       text: hasKey
         ? `Add an LLM provider key — ✓ ${configuredKeys.length} configured`
         : 'Add an LLM provider key',
       cls: 'cortex-local-hero-step-label',
     });
-    step1Body.createEl('div', {
+    step1Body.createDiv({
       cls: 'setting-item-description',
       text: hasKey
         ? 'Used for entity extraction and graph queries. You can add more below.'
@@ -719,54 +1098,54 @@ export class CortexSettingTab extends PluginSettingTab {
       if (!target) return;
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       // Open the disclosure if the user has any keys (it's already open when none).
-      if (target instanceof HTMLDetailsElement) target.open = true;
+      if (target.instanceOf(HTMLDetailsElement)) target.open = true;
     });
 
     // 2. Save the Compose file.
     const step2 = hero.createDiv({ cls: 'cortex-local-hero-step' });
-    step2.createEl('span', { cls: 'cortex-local-hero-step-num', text: '2.' });
+    step2.createSpan({ cls: 'cortex-local-hero-step-num', text: '2.' });
     const step2Body = step2.createDiv({ cls: 'cortex-local-hero-step-body' });
-    step2Body.createEl('div', { text: 'Save docker-compose.cortex.yml to your vault', cls: 'cortex-local-hero-step-label' });
-    step2Body.createEl('div', {
+    step2Body.createDiv({ text: 'Save docker-compose.cortex.yml to your vault', cls: 'cortex-local-hero-step-label' });
+    step2Body.createDiv({
       cls: 'setting-item-description',
       text: 'Bakes your API key + provider keys into the file. Re-save anytime they change.',
     });
     const step2Actions = step2Body.createDiv({ cls: 'cortex-local-hero-step-actions' });
     const saveBtn = step2Actions.createEl('button', { text: 'Save to vault', cls: 'mod-cta' });
-    saveBtn.addEventListener('click', async () => {
+    saveBtn.addEventListener('click', () => { void (async () => {
       try {
         const path = 'docker-compose.cortex.yml';
         await this.plugin.app.vault.adapter.write(path, buildDockerComposeWithKeys(s));
-        saveBtn.setText('✓ Saved');
-        setTimeout(() => saveBtn.setText('Save to vault'), 2000);
+        saveBtn.setText('✓ saved');
+        activeWindow.setTimeout(() => saveBtn.setText('Save to vault'), 2000);
       } catch (e) {
         saveBtn.setText('Failed — check console');
         console.error('[Cortex] Failed to write compose file:', e);
       }
-    });
+    })(); });
     const copyYamlBtn = step2Actions.createEl('button', { text: 'Copy YAML' });
-    copyYamlBtn.addEventListener('click', async () => {
+    copyYamlBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(buildDockerComposeWithKeys(s));
       copyYamlBtn.setText('Copied');
-      setTimeout(() => copyYamlBtn.setText('Copy YAML'), 1400);
-    });
+      activeWindow.setTimeout(() => copyYamlBtn.setText('Copy YAML'), 1400);
+    })(); });
 
     // 3. Run docker compose.
     const step3 = hero.createDiv({ cls: 'cortex-local-hero-step' });
-    step3.createEl('span', { cls: 'cortex-local-hero-step-num', text: '3.' });
+    step3.createSpan({ cls: 'cortex-local-hero-step-num', text: '3.' });
     const step3Body = step3.createDiv({ cls: 'cortex-local-hero-step-body' });
-    step3Body.createEl('div', { text: 'Run this in your vault folder:', cls: 'cortex-local-hero-step-label' });
+    step3Body.createDiv({ text: 'Run this in your vault folder:', cls: 'cortex-local-hero-step-label' });
     const codeWrap = step3Body.createDiv({ cls: 'cortex-mcp-code-wrap' });
     const copyCmdBtn = codeWrap.createEl('button', { cls: 'cortex-mcp-copy', text: 'Copy' });
-    copyCmdBtn.addEventListener('click', async () => {
+    copyCmdBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(DOCKER_START_CMD);
       copyCmdBtn.textContent = 'Copied';
       copyCmdBtn.addClass('is-copied');
-      setTimeout(() => {
+      activeWindow.setTimeout(() => {
         copyCmdBtn.textContent = 'Copy';
         copyCmdBtn.removeClass('is-copied');
       }, 1400);
-    });
+    })(); });
     codeWrap.createEl('pre').createEl('code', { text: DOCKER_START_CMD });
 
     return hero;
@@ -779,24 +1158,50 @@ export class CortexSettingTab extends PluginSettingTab {
    */
   private renderLocalRunningCard(containerEl: HTMLElement, s: CortexSettings): HTMLElement {
     const card = containerEl.createDiv({ cls: 'cortex-local-running-card' });
-    card.style.margin = '8px 0 16px';
-    card.style.padding = '14px 16px';
-    card.style.borderLeft = '3px solid #22c55e';
-    card.style.background = 'rgba(34, 197, 94, 0.08)';
-    card.style.borderRadius = '4px';
-    card.style.color = 'var(--text-normal)';
-    card.createEl('div', {
+    card.addClass('cortex-success-card');
+    card.createDiv({
       text: '✓ Local stack running',
-      attr: { style: 'font-weight: 600; font-size: 14px; margin-bottom: 6px; color: var(--text-normal);' },
+      cls: 'cortex-settings-card-title',
     });
-    card.createEl('div', {
+    card.createDiv({
       text: `Connected to ${s.apiUrl}. Your vault is ready to be searched and indexed by AI agents.`,
-      attr: { style: 'font-size: 13px; color: var(--text-normal); opacity: 0.85;' },
+      cls: 'cortex-settings-card-body',
     });
-    card.createEl('div', {
+    card.createDiv({
       text: 'Verify with Cmd/Ctrl+P → "HangarX: Memory stats". Manage agents under the Agents section below.',
-      attr: { style: 'font-size: 13px; color: var(--text-normal); opacity: 0.7; margin-top: 6px;' },
+      cls: 'cortex-settings-card-footnote',
     });
+    // Per-vault isolation badge — explains how this vault is scoped on
+    // the local cortex-api so two vaults on the same machine never share
+    // data. The vaultId is used as the workspace identifier on every
+    // request; existing Phase 3.5 tenancy filtering does the isolation.
+    if (s.vaultId) {
+      const scope = card.createDiv({ cls: 'cortex-local-vault-scope' });
+      const label = scope.createSpan({ cls: 'cortex-local-vault-scope-label' });
+      label.setText('Vault scope: ');
+      const code = scope.createEl('code', { cls: 'cortex-local-vault-scope-id' });
+      code.setText(`vault_${s.vaultId.slice(0, 8)}`);
+      const hint = scope.createDiv({ cls: 'cortex-local-vault-scope-hint' });
+      hint.setText(
+        'Each vault on this machine gets its own scope so notes from a different vault never leak into your queries. Auto-generated; resetting it creates a fresh, empty graph for this vault.',
+      );
+      const reset = scope.createEl('button', {
+        cls: 'cortex-local-vault-scope-reset',
+        text: 'Reset scope',
+      });
+      reset.addEventListener('click', () => { void (async () => {
+        const ok = await confirmModal(this.plugin.app, {
+          title: 'Reset vault scope?',
+          body: 'A new vaultId will be generated. The existing scoped data on the local server will be orphaned (not deleted, but unreachable from this vault). Use this only when you intentionally want a fresh graph.',
+          confirmText: 'Reset',
+          destructive: true,
+        });
+        if (!ok) return;
+        s.vaultId = crypto.randomUUID();
+        await this.plugin.saveSettings();
+        this.display();
+      })(); });
+    }
     return card;
   }
 
@@ -939,7 +1344,7 @@ export class CortexSettingTab extends PluginSettingTab {
       // Docker Desktop deep-link. macOS/Windows installs respond to
       // `docker-desktop://` URLs that route to specific UI surfaces.
       // Best-effort — silently no-op on systems without Docker Desktop.
-      const dockerBtn = actions.createEl('button', { text: 'Open in Docker Desktop' });
+      const dockerBtn = actions.createEl('button', { text: 'Open in docker desktop' });
       dockerBtn.addEventListener('click', () => void this.openDockerDesktop());
 
       const revealBtn = actions.createEl('button', { text: 'Reveal docker-compose.cortex.yml' });
@@ -955,7 +1360,7 @@ export class CortexSettingTab extends PluginSettingTab {
       });
     } else {
       const hint = actions.createDiv({ cls: 'cortex-stack-health-yml-hint' });
-      hint.createEl('span', {
+      hint.createSpan({
         text: 'No docker-compose.cortex.yml in your vault yet — run "Save to vault" in step 2 above.',
       });
     }
@@ -985,15 +1390,16 @@ export class CortexSettingTab extends PluginSettingTab {
    */
   private async openDockerDesktop(): Promise<void> {
     if (!Platform.isDesktopApp) {
-      new Notice('Docker Desktop launch is desktop-only.');
+      new Notice('Docker desktop launch is desktop-only.');
       return;
     }
 
-    const cp = (window as any).require?.('child_process') as
+    const winReq = (window as unknown as { require?: (m: string) => unknown }).require;
+    const cp = winReq?.('child_process') as
       | typeof import('child_process')
       | undefined;
     if (!cp) {
-      new Notice('child_process unavailable. Open Docker Desktop manually.');
+      new Notice('Child_process unavailable. Open docker desktop manually.');
       return;
     }
 
@@ -1001,7 +1407,7 @@ export class CortexSettingTab extends PluginSettingTab {
     // URL on systems where it works, and falls back to OS handlers
     // gracefully on systems where it doesn't.
     try {
-      const electron = (window as any).require?.('electron') as { shell?: { openExternal?(url: string): Promise<void> } };
+      const electron = winReq?.('electron') as { shell?: { openExternal?(url: string): Promise<void> } } | undefined;
       if (electron?.shell?.openExternal) {
         await electron.shell.openExternal('docker-desktop://dashboard/containers')
           .catch(() => { /* fall through to native launcher */ });
@@ -1018,7 +1424,7 @@ export class CortexSettingTab extends PluginSettingTab {
         // No "success" event from spawn — assume the OS handler took it.
         // If the binary doesn't exist, the 'error' handler fires within
         // ~50ms; otherwise the launcher is in flight.
-        setTimeout(() => resolve(true), 200);
+        activeWindow.setTimeout(() => resolve(true), 200);
       } catch {
         resolve(false);
       }
@@ -1027,10 +1433,10 @@ export class CortexSettingTab extends PluginSettingTab {
     if (Platform.isMacOS) {
       const ok = await tryLaunch('open', ['-a', 'Docker']);
       if (ok) {
-        new Notice('Launched Docker Desktop.');
+        new Notice('Launched docker desktop.');
         return;
       }
-      new Notice('Couldn\'t launch Docker Desktop. Open it manually from Applications.');
+      new Notice('Couldn\'t launch docker desktop. Open it manually from applications.');
       return;
     }
 
@@ -1041,10 +1447,10 @@ export class CortexSettingTab extends PluginSettingTab {
       const ok = await tryLaunch('powershell', ['-NoProfile', '-Command', 'Start-Process "Docker Desktop"'])
         || await tryLaunch('cmd', ['/c', 'start', '', 'Docker Desktop']);
       if (ok) {
-        new Notice('Launched Docker Desktop.');
+        new Notice('Launched docker desktop.');
         return;
       }
-      new Notice('Couldn\'t launch Docker Desktop. Open it from the Start menu.');
+      new Notice('Couldn\'t launch docker desktop. Open it from the start menu.');
       return;
     }
 
@@ -1052,14 +1458,14 @@ export class CortexSettingTab extends PluginSettingTab {
       const ok = await tryLaunch('docker-desktop', [])
         || await tryLaunch('xdg-open', ['docker-desktop://dashboard/containers']);
       if (ok) {
-        new Notice('Launched Docker Desktop.');
+        new Notice('Launched docker desktop.');
         return;
       }
       new Notice('Couldn\'t launch Docker Desktop. Run `docker-desktop` from a terminal.');
       return;
     }
 
-    new Notice('Unsupported platform for Docker Desktop launch.');
+    new Notice('Unsupported platform for docker desktop launch.');
   }
 
   private async showRecentLogs(
@@ -1074,7 +1480,7 @@ export class CortexSettingTab extends PluginSettingTab {
     body.querySelectorAll('.cortex-stack-health-logs').forEach(el => el.remove());
 
     const container = body.createDiv({ cls: 'cortex-stack-health-logs' });
-    container.createEl('div', { cls: 'cortex-stack-health-logs-header', text: 'docker compose logs --tail=200 cortex-api' });
+    container.createDiv({ cls: 'cortex-stack-health-logs-header', text: 'docker compose logs --tail=200 cortex-api' });
     const pre = container.createEl('pre', { cls: 'cortex-stack-health-logs-pre' });
     const code = pre.createEl('code', { text: 'Running…' });
 
@@ -1082,12 +1488,13 @@ export class CortexSettingTab extends PluginSettingTab {
       // Lazy require — `child_process` doesn't exist on mobile, and the
       // dynamic import keeps esbuild from complaining about bundling Node
       // builtins for the mobile target.
-      const cp = (window as any).require?.('child_process') as
+      const winReq = (window as unknown as { require?: (m: string) => unknown }).require;
+      const cp = winReq?.('child_process') as
         | typeof import('child_process')
         | undefined;
-      const path = (window as any).require?.('path') as typeof import('path') | undefined;
+      const path = winReq?.('path') as typeof import('path') | undefined;
       if (!cp || !path) {
-        code.setText('child_process unavailable on this platform — copy the command above and run it in a terminal.');
+        code.setText('Child_process unavailable on this platform — copy the command above and run it in a terminal.');
         return;
       }
 
@@ -1104,7 +1511,7 @@ export class CortexSettingTab extends PluginSettingTab {
             // so treat any captured stdout/stderr as the body. Only fail on
             // ENOENT (docker not installed) or hard timeouts.
             if (err && !out && !errOut) return reject(err);
-            resolve((out as string) + (errOut ? `\n--- stderr ---\n${errOut}` : ''));
+            resolve((out) + (errOut ? `\n--- stderr ---\n${errOut}` : ''));
           },
         );
       });
@@ -1146,7 +1553,7 @@ export class CortexSettingTab extends PluginSettingTab {
       const headline = !apiReachable
         ? 'API isn\'t responding. Try the restart command first:'
         : 'A service is degraded. Try a targeted restart:';
-      recovery.createEl('div', { cls: 'cortex-stack-health-recovery-headline', text: headline });
+      recovery.createDiv({ cls: 'cortex-stack-health-recovery-headline', text: headline });
 
       const primaryCmd = !apiReachable
         ? `${cdPrefix}docker compose -f ${yml} up -d`
@@ -1200,15 +1607,15 @@ export class CortexSettingTab extends PluginSettingTab {
     const row = parent.createDiv({ cls: 'cortex-stack-health-cmd' });
     if (primary) row.addClass('is-primary');
     if (destructive) row.addClass('is-destructive');
-    row.createEl('div', { cls: 'cortex-stack-health-cmd-label', text: label });
+    row.createDiv({ cls: 'cortex-stack-health-cmd-label', text: label });
     const codeWrap = row.createDiv({ cls: 'cortex-stack-health-cmd-codewrap' });
     codeWrap.createEl('pre').createEl('code', { text: command });
     const copyBtn = codeWrap.createEl('button', { cls: 'cortex-stack-health-cmd-copy', text: 'Copy' });
-    copyBtn.addEventListener('click', async () => {
+    copyBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(command);
       copyBtn.setText('Copied');
-      setTimeout(() => copyBtn.setText('Copy'), 1400);
-    });
+      activeWindow.setTimeout(() => copyBtn.setText('Copy'), 1400);
+    })(); });
   }
 
   /**
@@ -1221,12 +1628,20 @@ export class CortexSettingTab extends PluginSettingTab {
    * mode runs auth-disabled and ignores the value at the wire level.
    */
   private renderConnectionDetails(parent: HTMLElement, s: CortexSettings): void {
+    // Re-labeled from "Connection details" → "Diagnostics & overrides".
+    // The original label implied "things you must configure"; the new
+    // label correctly signals "things you only touch when something is
+    // wrong or non-default". In local mode all three of API URL /
+    // Workspace ID / API key have working defaults or auto-generation,
+    // so promoting them as primary inputs would mislead first-time
+    // users into thinking they need to fill three fields when they
+    // need to fill zero.
     const wrap = parent.createEl('details', { cls: 'cortex-cloud-advanced' });
-    wrap.createEl('summary', { text: 'Connection details — Compose file, URL, workspace, API key' });
+    wrap.createEl('summary', { text: 'Diagnostics & overrides — compose file, URL, workspace, API key' });
     const body = wrap.createDiv();
 
     new Setting(body)
-      .setName('Docker Compose file')
+      .setName('Docker compose file')
       .setDesc('Re-save the YAML when you change provider keys, then run docker compose up -d --force-recreate to apply.')
       .addButton(b => b
         .setButtonText('Save to vault')
@@ -1235,16 +1650,16 @@ export class CortexSettingTab extends PluginSettingTab {
           const path = 'docker-compose.cortex.yml';
           try {
             await this.plugin.app.vault.adapter.write(path, buildDockerComposeWithKeys(s));
-            b.setButtonText('✓ Saved');
+            b.setButtonText('✓ saved');
             new Notice(
               `Saved ${path}. If the stack is already running, apply with: docker compose -f ${path} up -d --force-recreate`,
               8000,
             );
-            setTimeout(() => b.setButtonText('Save to vault'), 2000);
+            activeWindow.setTimeout(() => b.setButtonText('Save to vault'), 2000);
           } catch (e) {
             b.setButtonText('Failed');
             console.error('[Cortex] Failed to write compose file:', e);
-            setTimeout(() => b.setButtonText('Save to vault'), 2000);
+            activeWindow.setTimeout(() => b.setButtonText('Save to vault'), 2000);
           }
         }))
       .addButton(b => b
@@ -1252,53 +1667,115 @@ export class CortexSettingTab extends PluginSettingTab {
         .onClick(async () => {
           await navigator.clipboard.writeText(buildDockerComposeWithKeys(s));
           b.setButtonText('Copied');
-          setTimeout(() => b.setButtonText('Copy YAML'), 1400);
+          activeWindow.setTimeout(() => b.setButtonText('Copy YAML'), 1400);
         }));
 
-    new Setting(body)
+    // API URL — has a working default. Tag with a `[default]` pill so
+    // users know they don't need to touch it unless port-remapped.
+    const apiUrlSetting = new Setting(body)
       .setName('API URL')
-      .setDesc('Your local HangarX API URL. Defaults to http://localhost:3400 — only change if you remapped the port.')
+      .setDesc('Defaults to HTTP://localhost:3400 — only change if you remapped the port.')
       .addText(t => t
         .setPlaceholder(LOCAL_API_URL)
         .setValue(s.apiUrl)
         .onChange(async v => { s.apiUrl = v || LOCAL_API_URL; await this.plugin.saveSettings(); }));
+    this.renderRolePill(apiUrlSetting.nameEl, 'default ok');
 
-    new Setting(body)
+    // Workspace ID — auto-generated. Most users never have a reason to
+    // change it; tag with `[auto]` to make the role obvious.
+    const workspaceSetting = new Setting(body)
       .setName('Workspace ID')
-      .setDesc('A namespace for your graph data. Auto-generated; only change if you want multiple isolated graphs.')
+      .setDesc('Auto-generated. Only change if you want multiple isolated graphs in the same postgres.')
       .addText(t => t
-        .setPlaceholder('default')
+        .setPlaceholder('Default')
         .setValue(s.workspaceId)
         .onChange(async v => { s.workspaceId = v.trim() || 'default'; await this.plugin.saveSettings(); }));
+    this.renderRolePill(workspaceSetting.nameEl, 'auto');
 
-    new Setting(body)
-      .setName('API key')
-      .setDesc('Saved cloud API key. Local mode is auth-disabled and ignores this value, but the key is preserved across mode switches so you don\'t have to re-sign-in.')
-      .addText(t => {
-        t.inputEl.type = 'password';
-        t.setPlaceholder('ctx_…')
-          .setValue(s.apiKey)
-          .onChange(async v => { s.apiKey = v.trim(); await this.plugin.saveSettings(); });
-      })
-      .addExtraButton(b => b
-        .setIcon('eye')
-        .setTooltip('Show/hide')
-        .onClick(() => {
-          const inputs = Array.from(body.querySelectorAll<HTMLInputElement>('input'));
-          for (const el of inputs) {
-            if (el.placeholder === 'ctx_…' || el.value === s.apiKey) {
-              el.type = el.type === 'password' ? 'text' : 'password';
-            }
-          }
-        }))
-      .addExtraButton(b => b
+    // API key — in local mode the cortex-api binds 127.0.0.1 with
+    // LOCAL_AUTH_DISABLED=true, so the key is literally ignored. The
+    // only reason to keep it around is to preserve the cloud-mode
+    // value across Cloud → Local → Cloud round-trips. Showing an
+    // editable input misleads users into thinking they need to paste
+    // something. Render as a read-only status line instead, with a
+    // copy button for cases where the user actually wants the value.
+    const keyStatusRow = new Setting(body)
+      .setName('Saved cloud API key')
+      .setDesc(s.apiKey
+        ? 'Preserved across mode switches so you don\'t have to re-sign-in. Local mode ignores this value.'
+        : 'Not set. Sign in via Cloud mode to save one — local mode does not require it.');
+    this.renderRolePill(keyStatusRow.nameEl, 'ignored in local mode');
+    if (s.apiKey) {
+      const masked = `${s.apiKey.slice(0, 6)}…${s.apiKey.slice(-4)}`;
+      keyStatusRow.controlEl.createSpan({ cls: 'cortex-key-masked', text: masked });
+      keyStatusRow.addExtraButton(b => b
         .setIcon('copy')
-        .setTooltip('Copy to clipboard')
+        .setTooltip('Copy full key to clipboard')
         .onClick(async () => {
-          if (!s.apiKey) { new Notice('No API key saved.'); return; }
           await navigator.clipboard.writeText(s.apiKey);
           new Notice('API key copied.');
         }));
+      keyStatusRow.addExtraButton(b => b
+        .setIcon('trash-2')
+        .setTooltip('Forget saved key')
+        .onClick(async () => {
+          const ok = await confirmModal(this.plugin.app, {
+            title: 'Forget the saved cloud API key?',
+            body: 'You\'ll need to sign in again next time you switch to Cloud mode.',
+            confirmText: 'Forget key',
+            destructive: true,
+          });
+          if (!ok) return;
+          s.apiKey = '';
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+    }
+  }
+
+  /**
+   * Tiny inline pill describing a setting's role — distinguishes
+   * fields that look mandatory but actually have a working default,
+   * are auto-generated, or are inert in the current mode. Visually
+   * lighter than the beta pill (neutral muted color) so it reads as
+   * informational metadata rather than a warning.
+   */
+  private renderRolePill(parent: HTMLElement, label: string): void {
+    parent.createSpan({ cls: 'cortex-role-pill', text: label });
+  }
+
+  /**
+   * Render the live web-search-backend status returned from
+   * /v1/agent/web-search-status into a human dependency hint.
+   * Names the backend explicitly so the user knows what's serving
+   * their next web_search call and whether it's likely to work.
+   */
+  private formatWebSearchHint(status: import('./cortex-client').WebSearchStatus): string {
+    const providerLabel = (b: string): string => {
+      switch (b) {
+        case 'openai-native':     return 'OpenAI native web search';
+        case 'anthropic-native':  return 'Anthropic native web search';
+        case 'gemini-grounding':  return 'Gemini grounding';
+        case 'tavily':            return 'Tavily Search';
+        case 'perplexity':        return 'Perplexity Sonar';
+        default:                  return b;
+      }
+    };
+    if (status.backend === 'none') {
+      return 'No web-search backend configured. Configure your active LLM provider with a key (OpenAI, Anthropic, Gemini all have native web search), or set TAVILY_API_KEY (recommended, 1k/month free) or PERPLEXITY_API_KEY on the server.';
+    }
+    if (!status.configured) {
+      const hasFallback = status.tavilyFallback || status.perplexityFallback;
+      const fallback = hasFallback ? '' : ' No Tavily or Perplexity fallback either — set TAVILY_API_KEY (recommended) or PERPLEXITY_API_KEY on the server, or add a key for the active provider.';
+      return `Would route to ${providerLabel(status.backend)} but its key is missing on the server.${fallback}`;
+    }
+    const activeBits = status.activeProvider && status.activeModel
+      ? ` (active model: ${status.activeProvider}/${status.activeModel})`
+      : '';
+    if (status.backend === 'perplexity') {
+      return `Currently routes through Perplexity Sonar${activeBits}. Provider-native search isn't available for the active model — provide an OpenAI / Anthropic / Gemini key to skip Perplexity.`;
+    }
+    return `Currently uses ${providerLabel(status.backend)}${activeBits} — no extra key needed.`;
   }
 
   /** Kicks off the OAuth sign-in flow, swapping the button label while it's in flight. */
@@ -1308,7 +1785,7 @@ export class CortexSettingTab extends PluginSettingTab {
     signInBtn.setAttr('disabled', 'true');
     try {
       const result = await startSignIn({
-        dashboardUrl: 'https://app.hangarx.ai',
+        dashboardUrl: 'https://app.HangarX.ai',
         apiUrl: s.apiUrl || CLOUD_API_URL,
         clientId: 'hangarx-obsidian',
         redirectUri: 'obsidian://hangarx-callback',
@@ -1332,15 +1809,15 @@ export class CortexSettingTab extends PluginSettingTab {
     let validateTimer: number | undefined;
     const scheduleValidate = () => {
       if (validateTimer) window.clearTimeout(validateTimer);
-      validateTimer = window.setTimeout(() => this.validateCloudKey(statusBadge), 600);
+      validateTimer = window.setTimeout(() => { void this.validateCloudKey(statusBadge); }, 600);
     };
 
     new Setting(parent)
-      .setName('API Key')
-      .setDesc('Org-scoped API key from your HangarX dashboard.')
+      .setName('API key')
+      .setDesc('Org-scoped API key from your hangarx dashboard.')
       .addText(t => {
         t.inputEl.type = 'password';
-        t.setPlaceholder('ctx_…')
+        t.setPlaceholder('Ctx_…')
           .setValue(s.apiKey)
           .onChange(async v => {
             s.apiKey = v.trim();
@@ -1350,14 +1827,14 @@ export class CortexSettingTab extends PluginSettingTab {
       })
       .addButton(b => b
         .setButtonText('Test')
-        .setTooltip('Validate the API key by calling /v1/api-keys/whoami')
+        .setTooltip('Validate the API key by calling /v1/API-keys/whoami')
         .onClick(() => this.validateCloudKey(statusBadge)));
 
     new Setting(parent)
       .setName('Workspace ID')
-      .setDesc('Found in your HangarX workspace settings (Settings → Workspaces).')
+      .setDesc('Found in your hangarx workspace settings (settings → workspaces).')
       .addText(t => t
-        .setPlaceholder('ws_…')
+        .setPlaceholder('Ws_…')
         .setValue(s.workspaceId)
         .onChange(async v => {
           s.workspaceId = v.trim();
@@ -1382,7 +1859,10 @@ export class CortexSettingTab extends PluginSettingTab {
    * Gemini → Claude in the middle of a session."
    */
   private renderLlmRuntimeSection(parent: HTMLElement): void {
-    parent.createEl('h3', { text: 'LLM (runtime)' });
+    // Folded into Chat & Agents under the new IA — render as a sub-heading
+    // (h4) rather than a top-level h3 so it nests visually under that
+    // section's header rather than reading as a peer section.
+    new Setting(parent).setName("Runtime LLM (advanced)").setHeading();
     parent.createEl('p', {
       cls: 'setting-item-description',
       text:
@@ -1401,7 +1881,7 @@ export class CortexSettingTab extends PluginSettingTab {
         ?? this.containerEl.querySelector<HTMLElement>('[data-cortex-keys-anchor]');
       if (!target) return;
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (target instanceof HTMLDetailsElement) target.open = true;
+      if (target.instanceOf(HTMLDetailsElement)) target.open = true;
     });
     xref.appendText(' above. Providers without a key are greyed out below.');
 
@@ -1471,7 +1951,6 @@ export class CortexSettingTab extends PluginSettingTab {
     let modelsByProvider: Record<string, Array<{ id: string; label: string }>> = { ...FALLBACK_MODELS };
     let currentProvider: string = '';
     let currentModel: string = '';
-    let currentApiKey: string = '';
     const providerSel = { value: '' };
     const modelSel = { value: '' };
 
@@ -1496,7 +1975,7 @@ export class CortexSettingTab extends PluginSettingTab {
         // Walk the rendered <option> elements to disable the no-key entries.
         // addOption doesn't expose a per-option disabled flag, so we modify
         // them after the fact via the underlying selectEl.
-        providerDropdownEl = (d as any).selectEl as HTMLSelectElement;
+        providerDropdownEl = (d as unknown as { selectEl: HTMLSelectElement }).selectEl;
         for (const opt of Array.from(providerDropdownEl.options)) {
           const keyField = runtimeProviderKeyField(opt.value);
           const hasKey = keyField === null || !!s.llmKeys[keyField];
@@ -1516,14 +1995,18 @@ export class CortexSettingTab extends PluginSettingTab {
         d.onChange(v => { modelSel.value = v; });
       });
 
-    let apiKeyInput: any = null;
+    // The text-component API surface we use here. Typing as the
+    // narrow shape lets the call sites below access getValue/setValue
+    // without cast-on-call.
+    type TextLike = { getValue?(): string; setValue?(v: string): void };
+    let apiKeyInput: TextLike | null = null;
     const keySetting = new Setting(wrap)
       .setName('API key')
       .setDesc('Optional. Leave blank to keep the existing key. Required only when switching providers or rotating.')
       .addText(t => {
-        apiKeyInput = t;
+        apiKeyInput = t as unknown as TextLike;
         t.inputEl.type = 'password';
-        t.setPlaceholder('sk-… / AIza… / etc.');
+        t.setPlaceholder('Sk-… / aiza… / etc.');
       });
 
     const buttonRow = wrap.createDiv({ cls: 'cortex-llm-runtime-actions' });
@@ -1537,18 +2020,18 @@ export class CortexSettingTab extends PluginSettingTab {
     };
 
     const repopulateModels = () => {
-      const dropdown = (modelSetting.components[0] as any).selectEl as HTMLSelectElement;
+      const dropdown = (modelSetting.components[0] as unknown as { selectEl: HTMLSelectElement }).selectEl;
       while (dropdown.firstChild) dropdown.removeChild(dropdown.firstChild);
       const list = modelsByProvider[providerSel.value] ?? [];
       if (list.length === 0) {
-        const opt = document.createElement('option');
+        const opt = activeDocument.createEl('option');
         opt.value = ''; opt.text = `— no models registered for ${providerSel.value} —`;
         dropdown.appendChild(opt);
         modelSel.value = '';
         return;
       }
       for (const m of list) {
-        const opt = document.createElement('option');
+        const opt = activeDocument.createEl('option');
         opt.value = m.id; opt.text = m.label || m.id;
         dropdown.appendChild(opt);
       }
@@ -1564,10 +2047,9 @@ export class CortexSettingTab extends PluginSettingTab {
     const seedFromConfig = (cfg: import('./cortex-client').LlmRuntimeConfig) => {
       currentProvider = cfg.chatProvider ?? '';
       currentModel = cfg.chatModel ?? '';
-      currentApiKey = '';
       providerSel.value = currentProvider || 'gemini';
       modelSel.value = currentModel;
-      const pDropdown = (providerSetting.components[0] as any).selectEl as HTMLSelectElement;
+      const pDropdown = (providerSetting.components[0] as unknown as { selectEl: HTMLSelectElement }).selectEl;
       pDropdown.value = providerSel.value;
       repopulateModels();
       const keyHint = cfg.chatApiKeyMasked
@@ -1581,10 +2063,13 @@ export class CortexSettingTab extends PluginSettingTab {
       const arr = Array.isArray(reg) ? reg : Object.values(reg);
       for (const p of arr) {
         // Server `ModelInfo` uses `name`, plugin uses `label`. Accept either.
-        const serverList = (p.models ?? []).map((m: any) => ({
-          id: m.id,
-          label: m.label || m.name || m.id,
-        }));
+        const serverList = (p.models ?? []).map((m: unknown) => {
+          const mm = m as { id: string; label?: string; name?: string };
+          return {
+            id: mm.id,
+            label: mm.label || mm.name || mm.id,
+          };
+        });
         // Merge fallback + server entries by id rather than letting the
         // server fully replace the fallback. Server wins on label conflicts
         // (richer metadata like context window in the name), but any model
@@ -1614,7 +2099,7 @@ export class CortexSettingTab extends PluginSettingTab {
         seedFromConfig({
           chatProvider: 'gemini',
           chatModel: '',
-        } as import('./cortex-client').LlmRuntimeConfig);
+        });
         const msg = (e as Error).message;
         if (/→ 500/.test(msg)) {
           setStatus(
@@ -1629,17 +2114,17 @@ export class CortexSettingTab extends PluginSettingTab {
       setStatus(`Couldn't load model registry: ${(e as Error).message}`, 'err');
     });
 
-    testBtn.addEventListener('click', async () => {
+    testBtn.addEventListener('click', () => { void (async () => {
       if (!providerSel.value || !modelSel.value) {
         setStatus('Pick a provider and model first.', 'err');
         return;
       }
-      const apiKey = apiKeyInput?.getValue?.() as string | undefined;
+      const apiKey = apiKeyInput?.getValue?.();
       testBtn.setAttr('disabled', 'true');
       testBtn.setText('Testing…');
       try {
         const r = await this.plugin.client.testLlmConfig({
-          provider: providerSel.value as any,
+          provider: providerSel.value as import('./cortex-client').LlmProvider,
           model: modelSel.value,
           apiKey: apiKey || undefined,
         });
@@ -1654,19 +2139,19 @@ export class CortexSettingTab extends PluginSettingTab {
         testBtn.removeAttribute('disabled');
         testBtn.setText('Test');
       }
-    });
+    })(); });
 
-    applyBtn.addEventListener('click', async () => {
+    applyBtn.addEventListener('click', () => { void (async () => {
       if (!providerSel.value || !modelSel.value) {
         setStatus('Pick a provider and model first.', 'err');
         return;
       }
-      const apiKey = apiKeyInput?.getValue?.() as string | undefined;
+      const apiKey = apiKeyInput?.getValue?.();
       applyBtn.setAttr('disabled', 'true');
       applyBtn.setText('Applying…');
       try {
         const cfg = await this.plugin.client.updateLlmConfig({
-          chatProvider: providerSel.value as any,
+          chatProvider: providerSel.value as import('./cortex-client').LlmProvider,
           chatModel: modelSel.value,
           // Only send the key if the user typed something — otherwise the
           // server keeps whatever's already stored.
@@ -1682,11 +2167,13 @@ export class CortexSettingTab extends PluginSettingTab {
         applyBtn.removeAttribute('disabled');
         applyBtn.setText('Apply');
       }
-    });
+    })(); });
   }
 
   private renderAgentsSection(parent: HTMLElement): void {
-    parent.createEl('h3', { text: 'Agents' });
+    // Folded under the new "Power features" section header — drop the
+    // inner h3 to avoid two stacked headers ("Power features" then
+    // "Agents"). The descriptive paragraph still anchors the section.
     parent.createEl('p', {
       cls: 'setting-item-description',
       text:
@@ -1694,19 +2181,19 @@ export class CortexSettingTab extends PluginSettingTab {
         'Your notes, decisions, and project history become permanent agent context across sessions.',
     });
 
-    parent.createEl('h4', { text: 'Local agents', cls: 'cortex-agents-subhead' });
+    new Setting(parent).setName("Local agents").setHeading();
     const connectRow = parent.createDiv({ cls: 'cortex-agents-connect-row' });
     this.renderAgentConnectCards(connectRow);
 
     // Cloud agents — only meaningful when the user is signed into the cloud
-    // (the synced graph lives at cortex.hangarx.ai). In Local mode there's no
+    // (the synced graph lives at cortex.HangarX.ai). In Local mode there's no
     // remote endpoint to point cloud agents at, so we suppress the section.
     if (this.plugin.settings.connectionMode === 'cloud' && this.plugin.settings.apiKey) {
       this.renderCloudAgentsSection(parent);
     }
 
     new Setting(parent)
-      .setName('Enable local MCP server')
+      .setName('Enable local mcp server')
       .setDesc('Required for the connect buttons above. Binds to 127.0.0.1 only.')
       .addToggle(t => t
         .setValue(this.plugin.settings.mcpEnabled)
@@ -1720,18 +2207,18 @@ export class CortexSettingTab extends PluginSettingTab {
     if (!this.plugin.settings.mcpEnabled) {
       parent.createEl('p', {
         cls: 'cortex-agents-hint',
-        text: 'Enable the MCP server to expose memory tools to agents. The server only listens on localhost.',
+        text: 'Enable the mcp server to expose memory tools to agents. The server only listens on localhost.',
       });
       return;
     }
 
     // Advanced details — port, token, raw config snippet — folded.
     const advanced = parent.createEl('details', { cls: 'cortex-mcp-advanced' });
-    advanced.createEl('summary', { text: 'Advanced MCP details (port, token, manual config snippet)' });
+    advanced.createEl('summary', { text: 'Advanced mcp details (port, token, manual config snippet)' });
     const advBody = advanced.createDiv();
 
     new Setting(advBody)
-      .setName('MCP port')
+      .setName('Mcp port')
       .setDesc('Port to bind to (default 7474). Change requires server restart.')
       .addText(t => t
         .setValue(String(this.plugin.settings.mcpPort))
@@ -1746,11 +2233,11 @@ export class CortexSettingTab extends PluginSettingTab {
     if (this.plugin.settings.mcpToken) {
       const url = `http://127.0.0.1:${this.plugin.settings.mcpPort}`;
       new Setting(advBody)
-        .setName('MCP URL')
+        .setName('Mcp URL')
         .addText(t => { t.inputEl.readOnly = true; t.setValue(url); });
 
       new Setting(advBody)
-        .setName('MCP token')
+        .setName('Mcp token')
         .setDesc('Bearer token required by clients. Keep it secret.')
         .addText(t => {
           t.inputEl.readOnly = true;
@@ -1786,21 +2273,21 @@ export class CortexSettingTab extends PluginSettingTab {
 }`;
       const example = advBody.createEl('details', { cls: 'cortex-mcp-example' });
       example.createEl('summary', { text: 'Manual config snippet (for tools without one-click connect)' });
-      const codeWrap = example.createEl('div', { cls: 'cortex-mcp-code-wrap' });
+      const codeWrap = example.createDiv({ cls: 'cortex-mcp-code-wrap' });
       const copyBtn = codeWrap.createEl('button', {
         cls: 'cortex-mcp-copy',
         text: 'Copy',
       });
-      copyBtn.addEventListener('click', async () => {
+      copyBtn.addEventListener('click', () => { void (async () => {
         await navigator.clipboard.writeText(snippet);
         const original = copyBtn.textContent;
         copyBtn.textContent = 'Copied';
         copyBtn.addClass('is-copied');
-        setTimeout(() => {
+        activeWindow.setTimeout(() => {
           copyBtn.textContent = original;
           copyBtn.removeClass('is-copied');
         }, 1400);
-      });
+      })(); });
       codeWrap.createEl('pre').createEl('code', { text: snippet });
     }
   }
@@ -1822,7 +2309,7 @@ export class CortexSettingTab extends PluginSettingTab {
     if (!bridgePath) {
       parent.createEl('p', {
         cls: 'setting-item-description',
-        text: 'Bridge script not yet generated. Toggle the MCP server off and on to regenerate.',
+        text: 'Bridge script not yet generated. Toggle the mcp server off and on to regenerate.',
       });
       return;
     }
@@ -1884,16 +2371,16 @@ export class CortexSettingTab extends PluginSettingTab {
     const row = parent.createDiv({ cls: 'cortex-agent-row' });
     const main = row.createDiv({ cls: 'cortex-agent-row-main' });
     const head = main.createDiv({ cls: 'cortex-agent-row-head' });
-    head.createEl('span', { cls: 'cortex-agent-row-label', text: h.label });
-    const status = head.createEl('span', { cls: 'cortex-agent-row-status', text: '…' });
-    main.createEl('span', { cls: 'cortex-agent-row-desc', text: h.description });
+    head.createSpan({ cls: 'cortex-agent-row-label', text: h.label });
+    const status = head.createSpan({ cls: 'cortex-agent-row-status', text: '…' });
+    main.createSpan({ cls: 'cortex-agent-row-desc', text: h.description });
 
     const actions = row.createDiv({ cls: 'cortex-agent-row-actions' });
     const connectBtn = actions.createEl('button', { text: 'Connect' });
 
     void checkConnection(h.configPath).then(s => {
       if (s.connected) {
-        status.setText('✓ Connected');
+        status.setText('✓ connected');
         status.addClass('is-connected');
         connectBtn.setText('Reconnect');
       } else if (s.exists) {
@@ -1904,7 +2391,7 @@ export class CortexSettingTab extends PluginSettingTab {
       }
     });
 
-    connectBtn.addEventListener('click', async () => {
+    connectBtn.addEventListener('click', () => { void (async () => {
       connectBtn.setText('Connecting…');
       connectBtn.setAttr('disabled', 'true');
       try {
@@ -1924,7 +2411,7 @@ export class CortexSettingTab extends PluginSettingTab {
       } finally {
         connectBtn.removeAttribute('disabled');
       }
-    });
+    })(); });
 
     if (h.configPath) {
       const menuBtn = actions.createEl('button', {
@@ -1968,7 +2455,7 @@ export class CortexSettingTab extends PluginSettingTab {
       }));
 
     menu.addItem(item => item
-      .setTitle('Copy MCP snippet')
+      .setTitle('Copy mcp snippet')
       .setIcon('code')
       .onClick(async () => {
         const snippet = JSON.stringify(
@@ -1977,7 +2464,7 @@ export class CortexSettingTab extends PluginSettingTab {
           2,
         );
         await navigator.clipboard.writeText(snippet);
-        new Notice('MCP config snippet copied.');
+        new Notice('Mcp config snippet copied.');
       }));
 
     menu.addSeparator();
@@ -2017,8 +2504,8 @@ export class CortexSettingTab extends PluginSettingTab {
     const row = parent.createEl('details', { cls: 'cortex-agent-row cortex-agent-row-generic' });
     const summary = row.createEl('summary');
     const main = summary.createDiv({ cls: 'cortex-agent-row-main' });
-    main.createEl('span', { cls: 'cortex-agent-row-label', text: 'Other MCP-compatible app' });
-    main.createEl('span', {
+    main.createSpan({ cls: 'cortex-agent-row-label', text: 'Other MCP-compatible app' });
+    main.createSpan({
       cls: 'cortex-agent-row-desc',
       text: 'Copy the snippet below into any client that speaks MCP (Zed, Goose, Codex CLI, custom agents).',
     });
@@ -2029,12 +2516,12 @@ export class CortexSettingTab extends PluginSettingTab {
 
     const codeWrap = body.createDiv({ cls: 'cortex-mcp-code-wrap' });
     const copyBtn = codeWrap.createEl('button', { cls: 'cortex-mcp-copy', text: 'Copy' });
-    copyBtn.addEventListener('click', async () => {
+    copyBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(snippet);
       copyBtn.setText('Copied');
       copyBtn.addClass('is-copied');
-      setTimeout(() => { copyBtn.setText('Copy'); copyBtn.removeClass('is-copied'); }, 1400);
-    });
+      activeWindow.setTimeout(() => { copyBtn.setText('Copy'); copyBtn.removeClass('is-copied'); }, 1400);
+    })(); });
     codeWrap.createEl('pre').createEl('code', { text: snippet });
   }
 
@@ -2042,7 +2529,7 @@ export class CortexSettingTab extends PluginSettingTab {
    * Cloud agents section. Same vault, accessed remotely from a cloud-side
    * agent (Claude.ai web/mobile, ChatGPT desktop, Cursor on a remote dev
    * box) rather than via the local MCP bridge. The cloud already exposes a
-   * public MCP endpoint at cortex.hangarx.ai/mcp; agents authenticate with
+   * public MCP endpoint at cortex.HangarX.ai/mcp; agents authenticate with
    * the same `ctx_…` API key the plugin already has, so we just need to
    * surface the URL + key in copy-pasteable form.
    */
@@ -2052,37 +2539,37 @@ export class CortexSettingTab extends PluginSettingTab {
     const mcpUrl = `${apiUrl}/mcp`;
     const workspaceId = this.plugin.settings.workspaceId;
 
-    parent.createEl('h4', { text: 'Cloud agents', cls: 'cortex-agents-subhead' });
+    new Setting(parent).setName("Cloud agents").setHeading();
     parent.createEl('p', {
       cls: 'setting-item-description',
       text:
         'Reach the same workspace from agents that don\'t run on this machine — Claude.ai web/mobile, ChatGPT desktop, ' +
-        'or any agent on a cloud dev box. They authenticate against cortex.hangarx.ai/mcp using your API key.',
+        'or any agent on a cloud dev box. They authenticate against cortex.HangarX.ai/mcp using your API key.',
     });
 
     // Top-level URL + key card so users can grab credentials in one shot.
     const summary = parent.createDiv({ cls: 'cortex-cloud-agent-summary' });
     const summaryLeft = summary.createDiv({ cls: 'cortex-cloud-agent-summary-fields' });
-    summaryLeft.createEl('div', { cls: 'cortex-cloud-agent-row', text: `URL: ${mcpUrl}` });
-    summaryLeft.createEl('div', {
+    summaryLeft.createDiv({ cls: 'cortex-cloud-agent-row', text: `URL: ${mcpUrl}` });
+    summaryLeft.createDiv({
       cls: 'cortex-cloud-agent-row',
       text: `Auth: x-api-key: ${apiKey ? maskKey(apiKey) : '<not configured>'}`,
     });
     if (workspaceId) {
-      summaryLeft.createEl('div', {
+      summaryLeft.createDiv({
         cls: 'cortex-cloud-agent-row',
         text: `Workspace: x-workspace-id: ${workspaceId}`,
       });
     }
     const summaryActions = summary.createDiv({ cls: 'cortex-cloud-agent-summary-actions' });
     const copyAllBtn = summaryActions.createEl('button', { text: 'Copy URL + key', cls: 'mod-cta' });
-    copyAllBtn.addEventListener('click', async () => {
+    copyAllBtn.addEventListener('click', () => { void (async () => {
       const lines = [`URL: ${mcpUrl}`, `x-api-key: ${apiKey}`];
       if (workspaceId) lines.push(`x-workspace-id: ${workspaceId}`);
       await navigator.clipboard.writeText(lines.join('\n'));
       copyAllBtn.setText('Copied');
-      setTimeout(() => copyAllBtn.setText('Copy URL + key'), 1400);
-    });
+      activeWindow.setTimeout(() => copyAllBtn.setText('Copy URL + key'), 1400);
+    })(); });
 
     // Per-client rows (Claude.ai web, ChatGPT desktop, Other). Each opens
     // the client's MCP-config UI in a new tab and copies the credentials so
@@ -2115,19 +2602,19 @@ export class CortexSettingTab extends PluginSettingTab {
     for (const c of clients) {
       const row = list.createDiv({ cls: 'cortex-agent-row' });
       const main = row.createDiv({ cls: 'cortex-agent-row-main' });
-      main.createEl('span', { cls: 'cortex-agent-row-label', text: c.label });
-      main.createEl('span', { cls: 'cortex-agent-row-desc', text: c.description });
+      main.createSpan({ cls: 'cortex-agent-row-label', text: c.label });
+      main.createSpan({ cls: 'cortex-agent-row-desc', text: c.description });
 
       const actions = row.createDiv({ cls: 'cortex-agent-row-actions' });
       const setupBtn = actions.createEl('button', { text: c.openUrl ? 'Open & copy' : 'Copy creds' });
-      setupBtn.addEventListener('click', async () => {
+      setupBtn.addEventListener('click', () => { void (async () => {
         const lines = [`URL: ${mcpUrl}`, `x-api-key: ${apiKey}`];
         if (workspaceId) lines.push(`x-workspace-id: ${workspaceId}`);
         await navigator.clipboard.writeText(lines.join('\n'));
         if (c.openUrl) window.open(c.openUrl, '_blank');
         setupBtn.setText('Copied');
-        setTimeout(() => setupBtn.setText(c.openUrl ? 'Open & copy' : 'Copy creds'), 1400);
-      });
+        activeWindow.setTimeout(() => setupBtn.setText(c.openUrl ? 'Open & copy' : 'Copy creds'), 1400);
+      })(); });
 
       const moreBtn = actions.createEl('button', {
         text: '⋯',
@@ -2138,7 +2625,7 @@ export class CortexSettingTab extends PluginSettingTab {
         const menu = new Menu();
         menu.addItem(item => item.setTitle('Copy URL only').setIcon('clipboard').onClick(async () => {
           await navigator.clipboard.writeText(mcpUrl);
-          new Notice('MCP URL copied.');
+          new Notice('Mcp URL copied.');
         }));
         menu.addItem(item => item.setTitle('Copy key only').setIcon('clipboard').onClick(async () => {
           await navigator.clipboard.writeText(apiKey);
@@ -2153,7 +2640,7 @@ export class CortexSettingTab extends PluginSettingTab {
         menu.addItem(item => item.setTitle('Copy curl test').setIcon('terminal').onClick(async () => {
           const curl = `curl -s -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'x-api-key: ${apiKey}'${workspaceId ? ` -H 'x-workspace-id: ${workspaceId}'` : ''} -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' ${mcpUrl}`;
           await navigator.clipboard.writeText(curl);
-          new Notice('curl one-liner copied — paste in any terminal to verify connectivity.');
+          new Notice('Curl one-liner copied — paste in any terminal to verify connectivity.');
         }));
         menu.showAtMouseEvent(evt);
       });
@@ -2181,6 +2668,13 @@ export class CortexSettingTab extends PluginSettingTab {
       // has a generous free tier.
       { id: 'cohere',      label: 'Cohere (reranker)',          placeholder: '…',        href: 'https://dashboard.cohere.com/api-keys' },
       { id: 'jina',        label: 'Jina (reranker)',            placeholder: 'jina_…',   href: 'https://jina.ai/?sui=apikey' },
+      // Web-search backends — used by the agent's `web_search` tool when
+      // the active LLM provider doesn't have native web search. Optional;
+      // a missing key just disables the tool (graceful fallback).
+      // Tavily is preferred (purpose-built for agent loops, 1k/month
+      // free with no card); Perplexity stays as the backup.
+      { id: 'tavily',      label: 'Tavily (web search, recommended)', placeholder: 'tvly-…', href: 'https://app.tavily.com/home' },
+      { id: 'perplexity',  label: 'Perplexity (web search)',    placeholder: 'pplx-…',   href: 'https://www.perplexity.ai/settings/api' },
     ];
     const configuredCount = PROVIDERS.filter(p => !!s.llmKeys[p.id]).length;
     const summaryText = configuredCount === 0
@@ -2250,7 +2744,7 @@ export class CortexSettingTab extends PluginSettingTab {
       // Don't double-add if a re-render is in flight.
       if (summary.querySelector('.cortex-provider-row-active-chip')) return;
       const chip = createDiv({ cls: 'cortex-provider-row-active-chip' });
-      chip.setText('active for chat');
+      chip.setText('Active for chat');
       chip.setAttr('title', `${runtimeProvider}/${cfg.chatModel ?? '—'} is the current runtime override.`);
       // Insert right after the label so it sits beside the provider name,
       // not at the far right next to the masked-key status.
@@ -2274,8 +2768,8 @@ export class CortexSettingTab extends PluginSettingTab {
     row.setAttr('data-provider-id', p.id);
     if (s.llmKeys[p.id]) row.setAttr('open', ''); // open if user has a key here
     const summary = row.createEl('summary', { cls: 'cortex-provider-row-summary' });
-    summary.createEl('span', { cls: 'cortex-provider-row-label', text: p.label });
-    const status = summary.createEl('span', { cls: 'cortex-provider-row-status' });
+    summary.createSpan({ cls: 'cortex-provider-row-label', text: p.label });
+    const status = summary.createSpan({ cls: 'cortex-provider-row-status' });
     const renderStatus = () => {
       const key = s.llmKeys[p.id];
       status.empty();
@@ -2323,7 +2817,7 @@ export class CortexSettingTab extends PluginSettingTab {
 
     setting.addButton(b => b
       .setButtonText('Test')
-      .setTooltip('Verify the key by calling the provider through the local cortex-api.')
+      .setTooltip('Verify the key by calling the provider through the local cortex-API.')
       .onClick(async () => {
         const key = s.llmKeys[p.id];
         if (!key) { new Notice(`Enter a ${p.label} key first.`); return; }
@@ -2332,11 +2826,11 @@ export class CortexSettingTab extends PluginSettingTab {
         try {
           const ok = await this.testProviderKey(p.id, key);
           b.setButtonText(ok ? '✓ Valid' : '✗ Invalid');
-          setTimeout(() => b.setButtonText('Test'), 2200);
+          activeWindow.setTimeout(() => b.setButtonText('Test'), 2200);
         } catch (e) {
-          b.setButtonText('✗ Error');
+          b.setButtonText('✗ error');
           new Notice(`Test failed: ${(e as Error).message}`);
-          setTimeout(() => b.setButtonText('Test'), 2800);
+          activeWindow.setTimeout(() => b.setButtonText('Test'), 2800);
         } finally {
           b.setDisabled(false);
         }
@@ -2371,11 +2865,11 @@ export class CortexSettingTab extends PluginSettingTab {
 
     if (!s.apiKey) {
       badgeEl.addClass('is-warn');
-      badgeEl.createEl('span', { text: 'No API key set yet — paste one above to connect.' });
+      badgeEl.createSpan({ text: 'No API key set yet — paste one above to connect.' });
       return;
     }
 
-    badgeEl.createEl('span', { text: 'Checking API key…', cls: 'cortex-cloud-status-checking' });
+    badgeEl.createSpan({ text: 'Checking API key…', cls: 'cortex-cloud-status-checking' });
     try {
       const info = await this.plugin.client.getWhoami();
       badgeEl.empty();
@@ -2393,20 +2887,20 @@ export class CortexSettingTab extends PluginSettingTab {
         badgeEl.empty();
         if (ok) {
           badgeEl.addClass('is-valid');
-          badgeEl.createEl('span', {
+          badgeEl.createSpan({
             text: '✓ API key works (server doesn\'t expose identity details)',
             cls: 'cortex-cloud-status-head',
           });
           if (!s.workspaceId) {
             badgeEl.addClass('is-warn');
-            badgeEl.createEl('span', {
+            badgeEl.createSpan({
               cls: 'cortex-cloud-status-sub',
               text: '⚠ Workspace ID is empty — set it below to enable sync and ask.',
             });
           }
         } else {
           badgeEl.addClass('is-invalid');
-          badgeEl.createEl('span', {
+          badgeEl.createSpan({
             text: '✗ This API key was rejected by the server. Confirm it was copied correctly from the dashboard, or generate a new one.',
             cls: 'cortex-cloud-status-head',
           });
@@ -2425,23 +2919,23 @@ export class CortexSettingTab extends PluginSettingTab {
           FORBIDDEN: detail.message || 'Key is missing the required permissions.',
         };
         const headline = (detail.code && headlineByCode[detail.code]) || `Server rejected the key (${status}).`;
-        badgeEl.createEl('span', {
+        badgeEl.createSpan({
           text: `✗ ${headline}`,
           cls: 'cortex-cloud-status-head',
         });
         if (detail.code || detail.message) {
-          badgeEl.createEl('span', {
+          badgeEl.createSpan({
             text: `${detail.code ? `[${detail.code}] ` : ''}${detail.message ?? ''}`.trim(),
             cls: 'cortex-cloud-status-sub',
           });
         }
       } else if (status >= 500) {
-        badgeEl.createEl('span', {
+        badgeEl.createSpan({
           text: `✗ Server error (${status}) — try again in a moment.`,
           cls: 'cortex-cloud-status-head',
         });
       } else {
-        badgeEl.createEl('span', {
+        badgeEl.createSpan({
           text: `✗ ${msg.slice(0, 240) || 'Validation failed'}`,
           cls: 'cortex-cloud-status-head',
         });
@@ -2457,7 +2951,7 @@ export class CortexSettingTab extends PluginSettingTab {
     else if (info.name) headParts.push(info.name);
     else headParts.push('Authenticated');
     if (info.keyPrefix) headParts.push(`(${info.keyPrefix}…)`);
-    badgeEl.createEl('span', { text: headParts.join(' '), cls: 'cortex-cloud-status-head' });
+    badgeEl.createSpan({ text: headParts.join(' '), cls: 'cortex-cloud-status-head' });
 
     const subParts: string[] = [];
     if (info.lastUsedAt) {
@@ -2468,18 +2962,18 @@ export class CortexSettingTab extends PluginSettingTab {
       subParts.push(`${info.totalRequests.toLocaleString()} requests`);
     }
     if (subParts.length > 0) {
-      badgeEl.createEl('span', { text: subParts.join(' · '), cls: 'cortex-cloud-status-sub' });
+      badgeEl.createSpan({ text: subParts.join(' · '), cls: 'cortex-cloud-status-sub' });
     }
 
     if (!workspaceId) {
       badgeEl.addClass('is-warn');
-      badgeEl.createEl('span', {
+      badgeEl.createSpan({
         cls: 'cortex-cloud-status-sub',
         text: '⚠ Workspace ID is empty — set it below to enable sync and ask.',
       });
     } else if (info.allowedWorkspaceIds && !info.allowedWorkspaceIds.includes(workspaceId)) {
       badgeEl.addClass('is-warn');
-      badgeEl.createEl('span', {
+      badgeEl.createSpan({
         cls: 'cortex-cloud-status-sub',
         text: `⚠ This key isn't authorized for workspace ${workspaceId.slice(0, 16)}…`,
       });
@@ -2630,7 +3124,7 @@ export class CortexSettingTab extends PluginSettingTab {
       const res = await Promise.race([
         requestUrl({ url, method: 'GET', throw: false }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('timeout after 5s')), 5000),
+          activeWindow.setTimeout(() => reject(new Error('timeout after 5s')), 5000),
         ),
       ]);
       let body: unknown = null;
@@ -2758,6 +3252,8 @@ function buildDockerComposeWithKeys(s: CortexSettings): string {
     ['XAI_API_KEY', s.llmKeys.xai],
     ['COHERE_API_KEY', s.llmKeys.cohere],
     ['JINA_API_KEY', s.llmKeys.jina],
+    ['PERPLEXITY_API_KEY', s.llmKeys.perplexity],
+    ['TAVILY_API_KEY', s.llmKeys.tavily],
   ];
   let out = base;
   for (const [envName, value] of pairs) {

@@ -13,11 +13,12 @@ import { GraphPull } from './services/graph-pull';
 import { GraphPullModal } from './views/graph-pull-modal';
 import { SyncModal } from './views/sync-modal';
 import { DiffModal } from './views/diff-modal';
-import { OnboardingModal } from './views/onboarding-modal';
+import { OnboardingView, ONBOARDING_VIEW_TYPE } from './views/onboarding-view';
 import { buildPublicApi, CortexPublicApi } from './api';
 import { inlineSuggestionsExtension } from './services/inline-suggestions';
 import { McpServer, generateToken } from './services/mcp-server';
 import { completeSignIn, cancelSignIn } from './services/oauth-flow';
+import { confirmModal } from './services/confirm-modal';
 
 /**
  * A persistent Notice with a progress bar. Keeps the user-supplied headline,
@@ -30,9 +31,9 @@ function makeProgressNotice(headline: string, onCancel?: () => void): {
   setCancelling: () => void;
 } {
   const notice = new Notice(headline, 0);
-  const root = notice.noticeEl;
+  const root = notice.messageEl;
   root.addClass('cortex-progress-notice');
-  const phaseEl = root.createEl('div', { cls: 'cortex-progress-phase', text: '' });
+  const phaseEl = root.createDiv({ cls: 'cortex-progress-phase', text: '' });
   const bar = root.createEl('progress', { cls: 'cortex-progress-bar' });
   bar.max = 100;
   bar.value = 0;
@@ -89,18 +90,18 @@ function promptForText(app: App, title: string, placeholder: string): Promise<st
         this.titleEl.setText(title);
         const input = this.contentEl.createEl('input', {
           cls: 'cortex-prompt-input',
-          attr: { type: 'text', placeholder, style: 'width:100%;padding:8px;margin-bottom:8px;' },
+          attr: { type: 'text', placeholder },
         });
         const btn = this.contentEl.createEl('button', {
+          cls: 'cortex-prompt-button',
           text: 'OK',
-          attr: { style: 'width:100%;' },
         });
         btn.addEventListener('click', () => { resolve(input.value.trim() || null); this.close(); });
         input.addEventListener('keydown', evt => {
           if (evt.key === 'Enter') { resolve(input.value.trim() || null); this.close(); }
           if (evt.key === 'Escape') { resolve(null); this.close(); }
         });
-        setTimeout(() => input.focus(), 50);
+        activeWindow.setTimeout(() => input.focus(), 50);
       }
       onClose() { resolve(null); this.contentEl.empty(); }
     })(app);
@@ -167,6 +168,7 @@ export default class CortexPlugin extends Plugin {
     this.registerView(CHAT_VIEW_TYPE, leaf =>
       new ChatView(leaf, this.client, this.conversations, this.settings, this),
     );
+    this.registerView(ONBOARDING_VIEW_TYPE, leaf => new OnboardingView(leaf, this));
 
     // OAuth callback handler. The dashboard's consent page redirects users
     // to obsidian://hangarx-callback?code=…&state=… after they approve;
@@ -225,8 +227,8 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-show-onboarding',
-      name: 'Show onboarding (welcome + setup steps)',
-      callback: () => new OnboardingModal(this.app, this).open(),
+      name: 'Show onboarding panel (Get started)',
+      callback: () => this.activateOnboardingView(),
     });
 
     this.addCommand({
@@ -245,8 +247,9 @@ export default class CortexPlugin extends Plugin {
       id: 'cortex-2-connect-agents',
       name: 'Connect agents (Claude, Cursor)…',
       callback: () => {
-        (this.app as any).setting?.open?.();
-        (this.app as any).setting?.openTabById?.(this.manifest.id);
+        const settingApi = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
+        settingApi?.open?.();
+        settingApi?.openTabById?.(this.manifest.id);
       },
     });
 
@@ -270,7 +273,7 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-related-pane',
-      name: 'Open Related notes pane',
+      name: 'Open related notes pane',
       callback: () => void this.activateRelatedView(),
     });
 
@@ -317,7 +320,7 @@ export default class CortexPlugin extends Plugin {
     // without Cmd-P.
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
-        if (!('extension' in file) || (file as any).extension !== 'md') return;
+        if (!('extension' in file) || (file as { extension?: string }).extension !== 'md') return;
         menu.addItem(item => {
           item.setTitle('HangarX: Sync to knowledge graph')
             .setIcon('refresh-cw')
@@ -346,7 +349,7 @@ export default class CortexPlugin extends Plugin {
 
       if (this.settings.syncOnStartup && this.settings.apiKey && this.settings.workspaceId) {
         // Defer so startup isn't blocked by sync.
-        setTimeout(() => this.sync.fullSync().catch(e => console.warn('[Cortex] startup sync', e)), 3000);
+        activeWindow.setTimeout(() => this.sync.fullSync().catch(e => console.warn('[Cortex] startup sync', e)), 3000);
       }
       const pane = this.settings.defaultRightPane
         ?? (this.settings.showRelatedPane ? 'related' : 'none');
@@ -356,23 +359,22 @@ export default class CortexPlugin extends Plugin {
         void this.activateRelatedView();
       }
       if (this.settings.mcpEnabled && this.settings.apiKey && this.settings.workspaceId) {
-        setTimeout(() => this.toggleMcpServer(true), 1500);
+        activeWindow.setTimeout(() => this.toggleMcpServer(true), 1500);
       }
 
-      // First-run onboarding: open the welcome modal once. We skip the
-      // auto-open if the user already looks fully set up — re-installing
-      // into an existing vault shouldn't re-greet them.
-      if (!this.settings.onboardingShownAt) {
+      // First-run onboarding: open the persistent side-panel checklist.
+      // Skip the auto-open if the user already looks fully set up — re-
+      // installing into an existing vault shouldn't re-greet them.
+      // Users who explicitly dismissed the panel before stay dismissed.
+      if (!this.settings.onboardingShownAt && !this.settings.onboardingDismissed) {
         const isCloud = this.settings.connectionMode === 'cloud';
         const looksConnected = isCloud
           ? !!(this.settings.apiKey && this.settings.workspaceId)
           : !!this.settings.workspaceId;
         if (!looksConnected) {
           // Defer past the first paint so Obsidian's own UI is settled.
-          setTimeout(() => new OnboardingModal(this.app, this).open(), 800);
+          activeWindow.setTimeout(() => void this.activateOnboardingView(), 800);
         } else {
-          // Quietly mark as shown — they don't need the onboarding, but we
-          // don't want it popping later if they sign out and back in.
           this.settings.onboardingShownAt = Date.now();
           void this.saveSettings();
         }
@@ -381,10 +383,10 @@ export default class CortexPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
-    this.app.workspace.detachLeavesOfType(RELATED_VIEW_TYPE);
-    this.app.workspace.detachLeavesOfType(CHAT_VIEW_TYPE);
+    
+    
     cancelSignIn();
-    await this.mcp?.stop().catch(() => {});
+    await this.mcp?.stop().catch(() => undefined);
   }
 
   async loadSettings(): Promise<void> {
@@ -392,8 +394,8 @@ export default class CortexPlugin extends Plugin {
     // One-shot migration: existing installs persisted the old `.com` cloud
     // host before we cut over to `.ai`. Rewrite it on load so users don't
     // have to manually edit the field.
-    if (this.settings.apiUrl === 'https://cortex.hangarx.com') {
-      this.settings.apiUrl = 'https://cortex.hangarx.ai';
+    if (this.settings.apiUrl === 'https://cortex.HangarX.com') {
+      this.settings.apiUrl = 'https://cortex.HangarX.ai';
       await this.saveData(this.settings);
     }
     // One-shot migration: 'self-hosted' mode was retired. Anyone with it
@@ -442,13 +444,13 @@ export default class CortexPlugin extends Plugin {
   private async activateRelatedView(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(RELATED_VIEW_TYPE);
     if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
       await leaf.setViewState({ type: RELATED_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
+      void this.app.workspace.revealLeaf(leaf);
     }
   }
 
@@ -492,11 +494,11 @@ export default class CortexPlugin extends Plugin {
    */
   private buildCloudGraphPull(): GraphPull | null {
     if (!this.settings.apiKey) {
-      new Notice('HangarX: Cloud API key is empty. Open Settings → Connection details and sign in or paste a key.');
+      new Notice('HangarX: Cloud API key is empty. Open settings → connection details and sign in or paste a key.');
       return null;
     }
     if (!this.settings.workspaceId) {
-      new Notice('HangarX: Cloud workspace ID is empty. Open Settings → Connection details.');
+      new Notice('HangarX: Cloud workspace ID is empty. Open settings → connection details.');
       return null;
     }
     // Spawn an isolated client + GraphPull pointed at cloud, with overrides
@@ -513,16 +515,33 @@ export default class CortexPlugin extends Plugin {
     return new GraphPull(this.app, cloudClient, cloudSettings);
   }
 
-  private async activateChatView(): Promise<void> {
+  async activateChatView(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
     if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
       await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
+      void this.app.workspace.revealLeaf(leaf);
+    }
+  }
+
+  /**
+   * Open the persistent onboarding side panel (creating it if needed).
+   * Used by both the first-run auto-open and the command palette entry.
+   */
+  async activateOnboardingView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(ONBOARDING_VIEW_TYPE);
+    if (existing.length > 0) {
+      void this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (leaf) {
+      await leaf.setViewState({ type: ONBOARDING_VIEW_TYPE, active: true });
+      void this.app.workspace.revealLeaf(leaf);
     }
   }
 
@@ -535,7 +554,7 @@ export default class CortexPlugin extends Plugin {
     await this.activateChatView();
     // setViewState resolves before the panel finishes mounting; defer one tick
     // so panel.prefill can find the populated input element.
-    setTimeout(() => {
+    activeWindow.setTimeout(() => {
       const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
       const view = leaves[0]?.view as ChatView | undefined;
       view?.prefill(text);
@@ -553,7 +572,7 @@ export default class CortexPlugin extends Plugin {
   private async runSyncCurrentNote(file: import('obsidian').TFile): Promise<void> {
     const s = this.settings;
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open Settings → Connection.');
+      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
       return;
     }
     const notice = new Notice(`HangarX: syncing ${file.basename}…`, 0);
@@ -580,16 +599,16 @@ export default class CortexPlugin extends Plugin {
   private async runFullSyncWithFeedback(): Promise<void> {
     const s = this.settings;
     if (!s.apiKey) {
-      new Notice('HangarX: API key is empty. Open Settings → Connection.');
+      new Notice('HangarX: API key is empty. Open settings → connection.');
       return;
     }
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open Settings → Connection.');
+      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
       return;
     }
     const fileCount = this.app.vault.getMarkdownFiles().length;
     if (fileCount === 0) {
-      new Notice('HangarX: vault has no markdown files to sync.');
+      new Notice('HangarX: vault has no Markdown files to sync.');
       return;
     }
     const abort = new AbortController();
@@ -650,13 +669,17 @@ export default class CortexPlugin extends Plugin {
   private async runForceResyncWithFeedback(): Promise<void> {
     const fileCount = this.app.vault.getMarkdownFiles().length;
     if (fileCount === 0) {
-      new Notice('HangarX: vault has no markdown files to sync.');
+      new Notice('Hangarx: vault has no Markdown files to sync.');
       return;
     }
-    const confirmed = confirm(
-      `Force-resync ${fileCount} files into the knowledge graph?\n\n` +
-      `This wipes the local sync index and re-pushes every file. Use this after the server-side graph has been reset (e.g. Docker volume wiped). It's safe — your notes themselves aren't touched.`,
-    );
+    const confirmed = await confirmModal(this.app, {
+      title: `Force-resync ${fileCount} files?`,
+      body:
+        `This wipes the local sync index and re-pushes every file into the knowledge graph.\n\n` +
+        `Use this after the server-side graph has been reset (e.g. Docker volume wiped). It's safe — your notes themselves aren't touched.`,
+      confirmText: 'Force resync',
+      destructive: true,
+    });
     if (!confirmed) return;
     const abort = new AbortController();
     const progress = makeProgressNotice(
@@ -684,9 +707,9 @@ export default class CortexPlugin extends Plugin {
         `✅ Force-resync done: ${synced} ingested, ${skipped} skipped, ${deleted} removed.\n` +
         `Click here to rebuild communities + reindex (recommended).`;
       const finishNotice = new Notice(noticeText, 12000);
-      finishNotice.noticeEl.addClass('cortex-clickable-notice');
-      finishNotice.noticeEl.style.cursor = 'pointer';
-      finishNotice.noticeEl.addEventListener('click', () => {
+      finishNotice.messageEl.addClass('cortex-clickable-notice');
+      // cursor handled by .cortex-clickable-notice CSS class above
+      finishNotice.messageEl.addEventListener('click', () => {
         finishNotice.hide();
         void this.runRebuildCommunitiesAndReindex();
       });

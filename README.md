@@ -120,19 +120,106 @@ Settings → **Agents** shows every supported harness:
 | Claude Desktop, Claude Code, Cursor, Cline, Windsurf | ✅ |
 | Zed, Goose, Codex CLI, custom MCP clients | Copy JSON snippet |
 
-Click **Connect** and HangarX merges its MCP server entry into the agent's config (non-destructively — your other MCP servers stay). Restart the agent and it gets these tools:
+Click **Connect** and HangarX merges its MCP server entry into the agent's config (non-destructively — your other MCP servers stay). Restart the agent and it gets the tools below.
+
+> The same tool set is available to the in-Obsidian chat agent and to every MCP-compatible client. Tool names match what you'll see in your AI tool's debug panel.
+
+#### Q&A and unified retrieval
 
 | Tool | What the agent can do |
 |---|---|
-| `cortex_ask` | Natural-language Q&A against your vault |
-| `cortex_recall` / `cortex_remember` | Persistent memory across agent sessions |
-| `cortex_related` | Find semantically similar notes |
-| `cortex_search_entities` | Search by person / project / concept name |
-| `cortex_stats` | Totals + per-type breakdowns for the whole graph |
-| `cortex_paths` | Trace connections between two ideas |
-| `cortex_contradictions` | Find conflicting claims across notes |
-| `cortex_suggest_links` | Wikilink suggestions for the current note |
-| `cortex_ingest_url` | Pull a URL into the graph |
+| `cortex_unified_ask` | Natural-language Q&A grounded in your vault — citations included |
+| `cortex_chat` | Multi-turn agentic chat with the full tool loop |
+| `cortex_get_context` | Build a hybrid retrieval bundle (entities + chunks + memories) for a query |
+| `cortex_unified_search` | One-shot search across entities, documents, and memories |
+| `cortex_advanced_search` | Hybrid search with date / tag / entity-type filters |
+
+#### Knowledge-graph exploration
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_search_entities` | Find entities by name + optional type (Person, Project, Document, …) |
+| `cortex_list_entities` | Paginated entity listing with type filters |
+| `cortex_get_entity` | Fetch one entity's full record (properties, type, description) |
+| `cortex_get_neighbors` | Expand 1–3 hops out from an entity to see what's connected |
+| `cortex_find_paths` | Shortest path between two entities — multi-hop graph reasoning |
+| `cortex_explain_entity` | Full profile of one entity in a single call: properties + neighbors + sources |
+| `cortex_get_provenance` | Source documents an entity was extracted from — the citation tool |
+| `cortex_query_graph` | Run a custom Cypher query (read-only) against the graph |
+| `cortex_get_schema` | Introspect the live graph schema (node types, edge types, properties) |
+| `cortex_get_communities` | Auto-detected entity clusters / topics |
+| `cortex_predict_links` | ML-suggested missing edges between entities |
+| `cortex_point_in_time` | Temporal queries — graph state as of a given timestamp |
+
+#### Document retrieval
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_search_documents` | Semantic search across your notes |
+| `cortex_summarize_document` | LLM summary of a single document |
+
+#### Memory (cross-session)
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_remember` | Save a fact / preference / decision to persistent memory |
+| `cortex_recall` | Retrieve memories relevant to a query |
+| `cortex_relate` | Find memories semantically related to an entity or topic |
+| `cortex_feedback` | Record agent feedback (helpful / not helpful) for future ranking |
+
+#### Graph health and ops
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_graph_stats` | Totals + per-type breakdowns of entities and relationships |
+| `cortex_find_duplicates` | Find likely duplicate entities by embedding similarity |
+| `cortex_diff_graph` | Compare graph state between two timestamps |
+| `cortex_export_graph` | Export the graph to JSON / GraphML / Cypher |
+| `cortex_file_persistence_status` | Check sync state of files between vault and graph |
+
+#### Ingestion and writes
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_ingest` | Add a single text chunk + metadata to the graph |
+| `cortex_bulk_ingest` | Batch ingest — efficient for large documents |
+| `cortex_create_document` / `cortex_delete_document` | Document-level lifecycle |
+| `cortex_create_entity` / `cortex_update_entity` / `cortex_delete_entity` | Entity-level lifecycle |
+| `cortex_create_relationship` | Add a typed edge between two entities |
+| `cortex_merge_entities` | Merge a source entity into a target (transfers all relationships) |
+| `cortex_tag_entity` | Lightweight metadata write |
+
+#### Web access
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_web_search` | Search the public web |
+| `cortex_web_scrape` | Fetch + extract content from a URL |
+
+#### Workflows and automation
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_list_workflows` | List your durable workflows |
+| `cortex_run_workflow` | Trigger a workflow run |
+| `cortex_create_workflow` / `cortex_update_workflow` / `cortex_delete_workflow` | Workflow lifecycle |
+| `cortex_list_custom_tools` / `cortex_run_custom_tool` | Discover and call user-defined tools |
+
+#### Live event streams
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_subscribe` / `cortex_subscribe_poll` | Subscribe to graph mutations and poll the queue |
+| `cortex_event_log_subscribe` / `cortex_event_log_poll` / `cortex_event_log_unsubscribe` | Event-log subscription lifecycle |
+
+#### Generative
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_generate_image` | Generate an image from a prompt |
+| `cortex_query_analytics` | Run pre-computed analytics queries (KPIs, rollups) |
+
+> 50+ tools total. Most agents will only use 5–10 of them — the **Q&A**, **exploration**, and **memory** sections cover almost every common workload. The rest are there when you need them.
 
 ---
 

@@ -56,7 +56,9 @@ const MIME_BY_EXT: Record<string, string> = {
 
 export class VaultSync {
   private index: SyncIndex = emptyIndex();
-  private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // `activeWindow.setTimeout` returns DOM-typed `number` (not Node's
+   // `Timeout`), so the map values must be number to satisfy strict mode.
+  private debounceTimers = new Map<string, number>();
   private indexLoaded = false;
   private indexWriteQueue: Promise<void> = Promise.resolve();
 
@@ -333,15 +335,20 @@ export class VaultSync {
     if (this.isExcluded(file.path)) return;
 
     const existing = this.debounceTimers.get(file.path);
-    if (existing) clearTimeout(existing);
+    if (existing) activeWindow.clearTimeout(existing);
 
-    const timer = setTimeout(async () => {
+    // Wrap async work in a void IIFE so the setTimeout callback itself
+    // returns void — the obsidianmd ESLint plugin flags Promise-returning
+    // callbacks passed where void is expected.
+    const timer = activeWindow.setTimeout(() => {
       this.debounceTimers.delete(file.path);
-      try {
-        await this.syncFile(file);
-      } catch (e) {
-        console.warn(`[Cortex] Sync failed for ${file.path}:`, e);
-      }
+      void (async () => {
+        try {
+          await this.syncFile(file);
+        } catch (e) {
+          console.warn(`[Cortex] Sync failed for ${file.path}:`, e);
+        }
+      })();
     }, this.settings.autoSyncDebounceMs);
     this.debounceTimers.set(file.path, timer);
   }
@@ -433,14 +440,13 @@ export class VaultSync {
     const prior = this.getFileState(file.path);
     if (prior && prior.hash === hash) return 'unchanged';
 
-    try {
-      await this.client.ingestNote(file.path, content, {
-        fastMode: opts.fastMode === true,
-        syncJobId: opts.syncJobId,
-      });
-    } catch (e) {
-      throw e;
-    }
+    // Errors propagate to the caller — no try/catch needed since we
+    // don't transform or recover here. The caller (fullSync /
+    // scheduleFileSync) has its own catch that records + logs.
+    await this.client.ingestNote(file.path, content, {
+      fastMode: opts.fastMode === true,
+      syncJobId: opts.syncJobId,
+    });
 
     // Update per-file state
     const now = Date.now();
@@ -587,13 +593,15 @@ function emptyIndex(vaultId = ''): SyncIndex {
 }
 
 /** Migrate older index shapes (drops fields from the cut features). */
-function mergeIndex(raw: any, vaultId: string): SyncIndex {
+function mergeIndex(raw: unknown, vaultId: string): SyncIndex {
+  // Narrow the unknown JSON.parse output to the partial shape we read.
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<SyncIndex>;
   return {
-    hashes: raw?.hashes ?? {},
-    files: raw?.files ?? {},
-    attachments: raw?.attachments ?? {},
-    vaultId: raw?.vaultId ?? vaultId,
-    lastFullSyncAt: raw?.lastFullSyncAt,
+    hashes: r.hashes ?? {},
+    files: r.files ?? {},
+    attachments: r.attachments ?? {},
+    vaultId: r.vaultId ?? vaultId,
+    lastFullSyncAt: r.lastFullSyncAt,
   };
 }
 
@@ -613,7 +621,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   let binary = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as number[]);
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
   }
   return btoa(binary);
 }

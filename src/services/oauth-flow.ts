@@ -44,7 +44,8 @@ interface PendingFlow {
   options: SignInOptions;
   resolve: (result: SignInResult) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  // `activeWindow.setTimeout` returns DOM-typed `number`, not Node's `Timeout`.
+  timer: number;
 }
 
 let pending: PendingFlow | null = null;
@@ -85,7 +86,7 @@ async function pkceChallenge(verifier: string): Promise<string> {
 export async function startSignIn(options: SignInOptions): Promise<SignInResult> {
   if (pending) {
     pending.reject(new Error('A new sign-in started; previous attempt cancelled.'));
-    clearTimeout(pending.timer);
+    activeWindow.clearTimeout(pending.timer);
     pending = null;
   }
 
@@ -102,7 +103,7 @@ export async function startSignIn(options: SignInOptions): Promise<SignInResult>
   url.searchParams.set('state', state);
 
   return new Promise<SignInResult>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const timer = activeWindow.setTimeout(() => {
       if (pending && pending.state === state) {
         pending = null;
         reject(new Error('Sign-in timed out — close the browser tab and try again.'));
@@ -116,7 +117,7 @@ export async function startSignIn(options: SignInOptions): Promise<SignInResult>
     const opened = window.open(url.toString(), '_blank');
     if (!opened) {
       // Pop-up blocked — fall back to copying the URL.
-      navigator.clipboard.writeText(url.toString()).catch(() => {});
+      navigator.clipboard.writeText(url.toString()).catch(() => undefined);
       new Notice('Browser blocked the new window. URL copied to clipboard — paste it in your browser to continue sign-in.', 8000);
     }
   });
@@ -129,12 +130,12 @@ export async function startSignIn(options: SignInOptions): Promise<SignInResult>
  */
 export async function completeSignIn(params: Record<string, string>): Promise<void> {
   if (!pending) {
-    new Notice('Received an OAuth callback but no sign-in is in progress. Ignoring.', 5000);
+    new Notice('Received an OAUTH callback but no sign-in is in progress. Ignoring.', 5000);
     return;
   }
   const flow = pending;
   pending = null;
-  clearTimeout(flow.timer);
+  activeWindow.clearTimeout(flow.timer);
 
   // Did the dashboard return an error?
   const errorCode = params.error;
@@ -156,7 +157,7 @@ export async function completeSignIn(params: Record<string, string>): Promise<vo
   }
 
   // Exchange the code for an access token. Use Obsidian's requestUrl rather
-  // than window.fetch — the renderer enforces CORS on fetch, but cortex.hangarx.ai
+  // than window.fetch — the renderer enforces CORS on fetch, but cortex.HangarX.ai
   // doesn't allow the obsidian:// origin (and shouldn't need to). requestUrl runs
   // through Electron's main process and bypasses CORS.
   try {
@@ -199,7 +200,7 @@ export async function completeSignIn(params: Record<string, string>): Promise<vo
 /** Cancel any in-progress sign-in (e.g. on plugin unload). */
 export function cancelSignIn(): void {
   if (pending) {
-    clearTimeout(pending.timer);
+    activeWindow.clearTimeout(pending.timer);
     pending.reject(new Error('Sign-in cancelled.'));
     pending = null;
   }

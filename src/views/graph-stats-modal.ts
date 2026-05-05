@@ -79,24 +79,24 @@ export class GraphStatsModal extends Modal {
       ? stats.totalRelationships / stats.totalEntities
       : 0;
     const ratioCard = summary.createDiv({ cls: 'cortex-graph-stats-card cortex-graph-stats-card-ratio' });
-    ratioCard.createEl('div', { cls: 'cortex-graph-stats-card-value', text: ratio.toFixed(2) });
-    ratioCard.createEl('div', { cls: 'cortex-graph-stats-card-label', text: 'Relationships per entity' });
-    const ratioHint = ratioCard.createEl('div', { cls: 'cortex-graph-stats-card-hint' });
+    ratioCard.createDiv({ cls: 'cortex-graph-stats-card-value', text: ratio.toFixed(2) });
+    ratioCard.createDiv({ cls: 'cortex-graph-stats-card-label', text: 'Relationships per entity' });
+    const ratioHint = ratioCard.createDiv({ cls: 'cortex-graph-stats-card-hint' });
     if (ratio < 1.2) {
       ratioCard.addClass('is-warn');
-      ratioHint.textContent = 'sparse — graph is mostly file structure';
+      ratioHint.textContent = 'Sparse — graph is mostly file structure';
     } else if (ratio < 2.5) {
-      ratioHint.textContent = 'moderate connectivity';
+      ratioHint.textContent = 'Moderate connectivity';
     } else {
       ratioCard.addClass('is-good');
-      ratioHint.textContent = 'richly connected';
+      ratioHint.textContent = 'Richly connected';
     }
 
     // ── Empty-state hint ───────────────────────────────────────────
     if (stats.totalEntities === 0) {
       const hint = c.createDiv({ cls: 'cortex-graph-stats-hint' });
       hint.createEl('p', {
-        text: 'The graph is empty. Run "HangarX: Sync vault to knowledge graph" from the command palette and check the DevTools console for any ingest errors.',
+        text: 'The graph is empty. Run "hangarx: Sync vault to knowledge graph" from the command palette and check the devtools console for any ingest errors.',
       });
       this.renderFooter(c, stats, ragStats, elapsedMs);
       return;
@@ -111,10 +111,10 @@ export class GraphStatsModal extends Modal {
       for (const i of insights) {
         const li = list.createEl('li');
         li.addClass(`is-${i.severity}`);
-        li.createEl('span', { cls: 'cortex-graph-stats-insight-icon', text: i.severity === 'warn' ? '⚠' : 'ⓘ' });
+        li.createSpan({ cls: 'cortex-graph-stats-insight-icon', text: i.severity === 'warn' ? '⚠' : 'ⓘ' });
         const body = li.createDiv({ cls: 'cortex-graph-stats-insight-body' });
-        body.createEl('div', { cls: 'cortex-graph-stats-insight-headline', text: i.headline });
-        body.createEl('div', { cls: 'cortex-graph-stats-insight-detail', text: i.detail });
+        body.createDiv({ cls: 'cortex-graph-stats-insight-headline', text: i.headline });
+        body.createDiv({ cls: 'cortex-graph-stats-insight-detail', text: i.detail });
       }
     }
 
@@ -127,7 +127,7 @@ export class GraphStatsModal extends Modal {
       const section = c.createDiv({ cls: 'cortex-graph-stats-section' });
       const headerRow = section.createDiv({ cls: 'cortex-graph-stats-section-header' });
       headerRow.createEl('h4', { text: 'What\'s in your graph' });
-      headerRow.createEl('span', {
+      headerRow.createSpan({
         cls: 'cortex-graph-stats-section-caption',
         text: `${sorted.length} ${sorted.length === 1 ? 'type' : 'types'}`,
       });
@@ -167,7 +167,7 @@ export class GraphStatsModal extends Modal {
       const section = c.createDiv({ cls: 'cortex-graph-stats-section' });
       const headerRow = section.createDiv({ cls: 'cortex-graph-stats-section-header' });
       headerRow.createEl('h4', { text: 'How things connect' });
-      headerRow.createEl('span', {
+      headerRow.createSpan({
         cls: 'cortex-graph-stats-section-caption',
         text: `${sorted.length} ${sorted.length === 1 ? 'type' : 'types'}`,
       });
@@ -230,7 +230,7 @@ export class GraphStatsModal extends Modal {
 
     const desc = wrap.createEl('p', { cls: 'setting-item-description' });
     desc.setText(
-      'Communities cluster densely-connected entities, with an LLM-generated summary per group. ' +
+      'Topic clusters group densely-connected notes, with an LLM-generated summary per group. ' +
       'Useful for "what topics dominate my vault?" and as retrieval seeds during chat.',
     );
 
@@ -239,20 +239,44 @@ export class GraphStatsModal extends Modal {
 
     const renderList = (communities: Array<import('../cortex-client').CommunitySummary>): void => {
       listEl.empty();
-      if (communities.length === 0) {
-        const empty = listEl.createEl('p', { cls: 'cortex-graph-stats-empty' });
-        empty.setText('No communities detected yet. Click "Detect now" to run Louvain on the current graph.');
+      // A row is only meaningful if it has members AND a name OR member
+      // entity hints we can display. Filter out zero-member ghost clusters
+      // before deciding whether the section is empty — those happen when
+      // detection ran on a sparse graph or a previous run was deleted.
+      const meaningful = communities.filter((c) => (c.memberCount ?? 0) > 0);
+      if (meaningful.length === 0) {
+        const empty = listEl.createDiv({ cls: 'cortex-graph-stats-empty-card' });
+        empty.createDiv({
+          cls: 'cortex-graph-stats-empty-title',
+          text: 'No topic clusters detected yet',
+        });
+        empty.createDiv({
+          cls: 'cortex-graph-stats-empty-body',
+          text: communities.length > 0
+            ? 'Detection ran but every cluster came back empty. The graph likely has too few entities to form meaningful groups — re-run after more notes have been ingested.'
+            : 'Click "Detect now" to run clustering on your current knowledge graph. Detection works best after at least 50 entities have been extracted.',
+        });
         return;
       }
-      const sorted = [...communities].sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
+      const sorted = [...meaningful].sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
       for (const c of sorted.slice(0, 20)) {
         const row = listEl.createDiv({ cls: 'cortex-graph-stats-community-row' });
         const head = row.createDiv({ cls: 'cortex-graph-stats-community-head' });
-        head.createEl('strong', { text: c.name || 'Unnamed community' });
+        // Fallback when the LLM-summary call hasn't given us a name yet:
+        // synthesize one from the cluster's top member entities so the
+        // user sees real content instead of "Unnamed community".
+        const rawMemberNames = (c as unknown as { memberNames?: string | string[] | null }).memberNames;
+        const memberHints = parseStringList(rawMemberNames ?? null);
+        const fallbackName = memberHints.length > 0
+          ? `${memberHints.slice(0, 3).join(', ')}${memberHints.length > 3 ? ` + ${memberHints.length - 3} more` : ''}`
+          : `Cluster of ${c.memberCount ?? 0} entities`;
+        head.createEl('strong', { text: c.name || fallbackName });
         const meta = head.createSpan({ cls: 'cortex-graph-stats-community-meta' });
         const parts: string[] = [];
         if (typeof c.memberCount === 'number') parts.push(`${c.memberCount} members`);
-        if (typeof c.level === 'number') parts.push(`L${c.level}`);
+        // Only show hierarchy level when it's non-zero (sub-cluster) —
+        // the user doesn't need to know "L0" means top-level group.
+        if (typeof c.level === 'number' && c.level > 0) parts.push(`sub-group · level ${c.level}`);
         if (typeof c.density === 'number' && c.density > 0) parts.push(`density ${c.density.toFixed(2)}`);
         meta.setText(parts.join(' · '));
         if (c.summary && c.summary.trim().length > 0) {
@@ -262,7 +286,7 @@ export class GraphStatsModal extends Modal {
         if (keywords.length > 0) {
           const kwRow = row.createDiv({ cls: 'cortex-graph-stats-community-keywords' });
           for (const kw of keywords.slice(0, 8)) {
-            kwRow.createEl('span', { cls: 'cortex-graph-stats-community-chip', text: kw });
+            kwRow.createSpan({ cls: 'cortex-graph-stats-community-chip', text: kw });
           }
         }
       }
@@ -285,13 +309,13 @@ export class GraphStatsModal extends Modal {
       }
     };
 
-    detectBtn.addEventListener('click', async () => {
+    detectBtn.addEventListener('click', () => { void (async () => {
       detectBtn.setAttr('disabled', 'true');
       detectBtn.setText('Detecting…');
       listEl.empty();
       listEl.createEl('p', {
         cls: 'cortex-graph-stats-loading',
-        text: 'Running Louvain + writing LLM summaries — can take 30–90s on large graphs…',
+        text: 'Running louvain + writing LLM summaries — can take 30–90s on large graphs…',
       });
       try {
         const res = await this.client.detectCommunities({ algorithm: 'louvain' });
@@ -308,7 +332,7 @@ export class GraphStatsModal extends Modal {
         detectBtn.removeAttribute('disabled');
         detectBtn.setText('Detect now');
       }
-    });
+    })(); });
 
     void loadList();
   }
@@ -337,15 +361,15 @@ export class GraphStatsModal extends Modal {
         }
       });
     }
-    row.createEl('span', { cls: 'cortex-graph-stats-bar-label', text: label });
+    row.createSpan({ cls: 'cortex-graph-stats-bar-label', text: label });
     const track = row.createDiv({ cls: 'cortex-graph-stats-bar-track' });
-    const fill = track.createDiv({ cls: 'cortex-graph-stats-bar-fill' });
+    const fill = track.createDiv({ cls: 'cortex-graph-stats-bar-fill cortex-progress-bar-fill' });
     const widthPct = max > 0 ? Math.max(2, Math.round((count / max) * 100)) : 0;
-    fill.style.width = `${widthPct}%`;
+    fill.setCssProps({ '--cortex-progress-pct': `${widthPct}%` });
     const right = row.createDiv({ cls: 'cortex-graph-stats-bar-meta' });
-    right.createEl('span', { cls: 'cortex-graph-stats-bar-count', text: formatNumber(count) });
+    right.createSpan({ cls: 'cortex-graph-stats-bar-count', text: formatNumber(count) });
     const percent = total > 0 ? (count / total) * 100 : 0;
-    right.createEl('span', {
+    right.createSpan({
       cls: 'cortex-graph-stats-bar-percent',
       text: percent < 0.5 ? '<1%' : `${percent.toFixed(0)}%`,
     });
@@ -382,45 +406,38 @@ export class GraphStatsModal extends Modal {
       }
     }
 
-    // GraphRAG orchestrator config: split into thresholds (numeric) and
-    // feature flags (boolean toggle chips). Raw JSON only at the very bottom
-    // for engineers who want to copy it.
+    // GraphRAG orchestrator config: keep only the user-actionable bits
+    // (active model / provider / numeric thresholds the user might tune).
+    // The boolean feature-flag chip wall ("Corrective Loops", "Raptor",
+    // "PPR Expansion", etc.) was removed — those are internal optimization
+    // names the user can't toggle and they leaked implementation jargon
+    // into a settings UI. If you need to inspect them, use the raw JSON
+    // copy below.
     if (ragStats) {
-      body.createEl('h5', { text: 'GraphRAG orchestrator' });
       const flat = flattenRagStats(ragStats);
-      const flags: Array<[string, boolean]> = [];
       const numbers: Array<[string, number]> = [];
       const strings: Array<[string, string]> = [];
       for (const [k, v] of Object.entries(flat)) {
-        if (typeof v === 'boolean') flags.push([k, v]);
-        else if (typeof v === 'number') numbers.push([k, v]);
+        if (typeof v === 'number') numbers.push([k, v]);
         else if (typeof v === 'string') strings.push([k, v]);
       }
-
-      if (flags.length > 0) {
-        body.createEl('div', { cls: 'cortex-graph-stats-tech-sublabel', text: 'Features' });
-        const chipWrap = body.createDiv({ cls: 'cortex-graph-stats-chips' });
-        for (const [k, v] of flags) {
-          const chip = chipWrap.createEl('span', { cls: 'cortex-graph-stats-chip' });
-          chip.addClass(v ? 'is-on' : 'is-off');
-          chip.createEl('span', { cls: 'cortex-graph-stats-chip-mark', text: v ? '✓' : '✗' });
-          chip.createEl('span', { text: humanizeKey(stripPrefix(k, 'enable')) });
-        }
-      }
-      if (numbers.length > 0) {
-        body.createEl('div', { cls: 'cortex-graph-stats-tech-sublabel', text: 'Thresholds & metrics' });
-        const dl = body.createEl('dl', { cls: 'cortex-graph-stats-dl' });
-        for (const [k, v] of numbers) {
-          dl.createEl('dt', { text: humanizeKey(k) });
-          dl.createEl('dd', { text: formatValue(v) });
-        }
+      if (numbers.length > 0 || strings.length > 0) {
+        body.createEl('h5', { text: 'Graphrag orchestrator' });
       }
       if (strings.length > 0) {
-        body.createEl('div', { cls: 'cortex-graph-stats-tech-sublabel', text: 'Models / providers' });
+        body.createDiv({ cls: 'cortex-graph-stats-tech-sublabel', text: 'Models / providers' });
         const dl = body.createEl('dl', { cls: 'cortex-graph-stats-dl' });
         for (const [k, v] of strings) {
           dl.createEl('dt', { text: humanizeKey(k) });
           dl.createEl('dd', { text: v });
+        }
+      }
+      if (numbers.length > 0) {
+        body.createDiv({ cls: 'cortex-graph-stats-tech-sublabel', text: 'Thresholds & metrics' });
+        const dl = body.createEl('dl', { cls: 'cortex-graph-stats-dl' });
+        for (const [k, v] of numbers) {
+          dl.createEl('dt', { text: humanizeKey(k) });
+          dl.createEl('dd', { text: formatValue(v) });
         }
       }
     }
@@ -433,31 +450,31 @@ export class GraphStatsModal extends Modal {
     elapsedMs: number,
   ): void {
     const footer = parent.createDiv({ cls: 'cortex-graph-stats-footer' });
-    footer.createEl('span', {
+    footer.createSpan({
       cls: 'cortex-graph-stats-elapsed',
       text: `Fetched in ${elapsedMs}ms`,
     });
     const refreshBtn = footer.createEl('button', { text: 'Refresh' });
-    refreshBtn.addEventListener('click', async () => {
+    refreshBtn.addEventListener('click', () => { void (async () => {
       this.contentEl.empty();
       await this.onOpen();
-    });
+    })(); });
     const copyBtn = footer.createEl('button', { text: 'Copy as Markdown' });
-    copyBtn.addEventListener('click', async () => {
+    copyBtn.addEventListener('click', () => { void (async () => {
       const md = renderAsMarkdown(stats, ragStats);
       await navigator.clipboard.writeText(md);
       copyBtn.setText('Copied');
-      setTimeout(() => copyBtn.setText('Copy as Markdown'), 1400);
-    });
+      activeWindow.setTimeout(() => copyBtn.setText('Copy as Markdown'), 1400);
+    })(); });
     const noteBtn = footer.createEl('button', { text: 'Save as note', cls: 'mod-cta' });
-    noteBtn.addEventListener('click', async () => {
+    noteBtn.addEventListener('click', () => { void (async () => {
       const md = renderAsMarkdown(stats, ragStats);
       const stamp = new Date().toISOString().replace(/[:]/g, '-').slice(0, 19);
       const path = `Cortex/Debug/Graph stats - ${stamp}.md`;
       try {
         const dir = path.split('/').slice(0, -1).join('/');
         if (dir && !this.app.vault.getAbstractFileByPath(dir)) {
-          await this.app.vault.createFolder(dir).catch(() => {});
+          await this.app.vault.createFolder(dir).catch(() => undefined);
         }
         const file = await this.app.vault.create(path, md);
         await this.app.workspace.getLeaf(false).openFile(file);
@@ -465,13 +482,13 @@ export class GraphStatsModal extends Modal {
       } catch (e) {
         new Notice(`Couldn't save note: ${(e as Error).message}`);
       }
-    });
+    })(); });
   }
 
   private renderHeroCard(parent: HTMLElement, label: string, value: string): void {
     const card = parent.createDiv({ cls: 'cortex-graph-stats-card' });
-    card.createEl('div', { cls: 'cortex-graph-stats-card-value', text: value });
-    card.createEl('div', { cls: 'cortex-graph-stats-card-label', text: label });
+    card.createDiv({ cls: 'cortex-graph-stats-card-value', text: value });
+    card.createDiv({ cls: 'cortex-graph-stats-card-label', text: label });
   }
 
   /** Render the connection-mode pill at the top — same shape as the chat
@@ -480,7 +497,7 @@ export class GraphStatsModal extends Modal {
   private renderModePillBar(parent: HTMLElement): void {
     if (!this.plugin) return;
     const bar = parent.createDiv({ cls: 'cortex-graph-stats-mode-bar' });
-    this.statusPillEl = bar.createEl('span', { cls: 'cortex-chat-mode-pill' });
+    this.statusPillEl = bar.createSpan({ cls: 'cortex-chat-mode-pill' });
     this.renderModePill('checking');
     void this.runModeProbe();
   }
@@ -536,19 +553,19 @@ export class GraphStatsModal extends Modal {
   private renderError(err: unknown): void {
     const fmt = formatError(err, 'Couldn\'t load graph stats');
 
-    const card = this.contentEl.createEl('div', { cls: `cortex-error-card cortex-error-${fmt.kind}` });
-    const head = card.createEl('div', { cls: 'cortex-error-head' });
-    const ic = head.createEl('span', { cls: 'cortex-error-icon' });
+    const card = this.contentEl.createDiv({ cls: `cortex-error-card cortex-error-${fmt.kind}` });
+    const head = card.createDiv({ cls: 'cortex-error-head' });
+    const ic = head.createSpan({ cls: 'cortex-error-icon' });
     setIcon(ic, errorIcon(fmt.kind));
-    head.createEl('span', { cls: 'cortex-error-headline', text: fmt.headline });
-    if (fmt.hint) card.createEl('div', { cls: 'cortex-error-hint', text: fmt.hint });
+    head.createSpan({ cls: 'cortex-error-headline', text: fmt.headline });
+    if (fmt.hint) card.createDiv({ cls: 'cortex-error-hint', text: fmt.hint });
 
     const detailWrap = card.createEl('details', { cls: 'cortex-error-detail-wrap' });
     detailWrap.createEl('summary', { text: 'Error details' });
     detailWrap.createEl('pre', { cls: 'cortex-error-detail' })
       .createEl('code', { text: fmt.detail });
 
-    const actions = card.createEl('div', { cls: 'cortex-error-actions' });
+    const actions = card.createDiv({ cls: 'cortex-error-actions' });
     if (this.plugin && fmt.kind === 'auth') {
       const openSettings = actions.createEl('button', { text: 'Open settings' });
       openSettings.addEventListener('click', () => {
@@ -559,10 +576,10 @@ export class GraphStatsModal extends Modal {
       });
     }
     const retry = actions.createEl('button', { text: 'Retry', cls: 'mod-cta' });
-    retry.addEventListener('click', async () => {
+    retry.addEventListener('click', () => { void (async () => {
       this.contentEl.empty();
       await this.onOpen();
-    });
+    })(); });
   }
 }
 
@@ -606,35 +623,20 @@ function computeInsights(stats: GraphStats, ragStats: GraphRAGStats | null): Ins
     });
   }
 
-  // 3. Reranker disabled — flagged from the search-stats blob if available.
-  const reranker = readNested(ragStats, ['advancedSearchStats', 'reranker']);
-  if (reranker && typeof reranker === 'object') {
-    const available = (reranker as Record<string, unknown>).available;
-    if (available === false) {
-      out.push({
-        severity: 'info',
-        headline: 'Reranker not configured',
-        detail: 'Search results are returned in raw similarity order. Configure a Cohere or Jina reranker for higher-quality answers.',
-      });
-    }
-  }
-
-  // 4. BM25 / GNN cache cold — the first few queries will be slower than
-  //    subsequent ones until the indices warm up.
-  const bm25 = readNested(ragStats, ['advancedSearchStats', 'bm25']);
-  const gnnCache = readNested(ragStats, ['advancedSearchStats', 'gnn', 'cacheSize']);
-  if (bm25 == null && (gnnCache === 0 || gnnCache == null)) {
-    out.push({
-      severity: 'info',
-      headline: 'Search indices are cold',
-      detail: 'BM25 and GNN caches haven\'t been populated yet — they warm up on first use. Your first few queries may be slower than subsequent ones.',
-    });
-  }
+  // 3. (intentionally removed) "Reranker not configured" used to surface
+  //    here, but cortex-api ships with 4 rerankers (embedding-similarity
+  //    fallback, gpt-4o-mini LLM rerank, optional Cohere, optional Jina)
+  //    and at least one is always active. Cohere/Jina are quality
+  //    upgrades, not requirements — the warning was misleading.
+  //
+  // 4. (intentionally removed) "Search indices are cold" was shown on
+  //    first use but resolved on the next query. Self-correcting <30s
+  //    conditions don't belong in a user-facing heads-up panel.
 
   // 5. Cache hit rate notably low — surfaced when there's been enough query
   //    volume for the number to be meaningful.
-  const totalQueries = (ragStats?.totalQueries as number | undefined) ?? 0;
-  const cacheHitRate = (ragStats?.cacheHitRate as number | undefined) ?? -1;
+  const totalQueries = (ragStats?.totalQueries) ?? 0;
+  const cacheHitRate = (ragStats?.cacheHitRate) ?? -1;
   if (totalQueries >= 50 && cacheHitRate >= 0 && cacheHitRate < 0.1) {
     out.push({
       severity: 'info',

@@ -34,20 +34,23 @@ export interface BridgeConfig {
 }
 
 /**
- * Lazy-load Node built-ins via Obsidian's Electron host. We use a dynamic
- * `require` (resolved through a string, not a literal) so esbuild's static
- * analysis can't see the imports and try to bundle them. On mobile the
- * `require` global doesn't exist; the UI gates these calls off there.
+ * Lazy-load Node built-ins via Obsidian's Electron host. We read
+ * `globalThis.require` at runtime so esbuild's static analysis can't
+ * see the imports and try to bundle them. On mobile (web build) the
+ * `require` global doesn't exist; callers below gate against this
+ * via `isDesktop()`. Avoids `new Function(...)` which the obsidianmd
+ * ESLint plugin blocks under `no-new-func`.
+ *
+ * The `any` return type is kept on purpose — the callers below treat
+ * the result as a CJS `require` and `unknown` would force a cast at
+ * every call site for no real type safety (we only ever pass it to
+ * known module names whose typings are imported separately).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dynRequire: any = (() => {
-  try {
-    // eslint-disable-next-line no-new-func
-    return new Function('m', 'return require(m)');
-  } catch {
-    return null;
-  }
-})();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above; mirrors Node's require signature
+const dynRequire: any =
+  typeof (globalThis as { require?: unknown }).require === 'function'
+    ? (globalThis as { require: unknown }).require
+    : null;
 function nodeFs(): typeof import('fs/promises') {
   return dynRequire('fs').promises;
 }
@@ -143,37 +146,45 @@ async function upsertMcpEntry(
 ): Promise<ConnectResult> {
   const fs = nodeFs();
   const path = nodePath();
-  let existing: Record<string, any> = {};
+  let existing: Record<string, unknown> = {};
   let fileExisted = false;
   try {
     const raw = await fs.readFile(configPath, 'utf8');
     fileExisted = true;
     if (raw.trim()) existing = JSON.parse(raw);
-  } catch (e: any) {
-    if (e?.code !== 'ENOENT') {
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err?.code !== 'ENOENT') {
       // Real read error — surface it.
       return {
         ok: false,
         configPath,
-        message: `Couldn't read ${configPath}: ${e.message}`,
+        message: `Couldn't read ${configPath}: ${err?.message ?? String(e)}`,
       };
     }
     // Else file simply doesn't exist; we'll create it.
   }
 
-  if (!existing.mcpServers || typeof existing.mcpServers !== 'object') {
-    existing.mcpServers = {};
+  // Narrow mcpServers to a record we can index safely. Existing config
+  // files write this as a plain object; if it's anything else (legacy
+  // shapes, hand-edits) we replace with an empty record.
+  let mcpServers: Record<string, unknown>;
+  if (existing.mcpServers && typeof existing.mcpServers === 'object' && !Array.isArray(existing.mcpServers)) {
+    mcpServers = existing.mcpServers as Record<string, unknown>;
+  } else {
+    mcpServers = {};
+    existing.mcpServers = mcpServers;
   }
   // Migrate legacy 'hangarx-obsidian' key (used in plugin versions ≤0.0.9)
   // to the canonical 'hangarx' id required by Obsidian's plugin store
   // (which forbids `obsidian` in plugin ids).
-  if (existing.mcpServers['hangarx-obsidian']) {
-    delete existing.mcpServers['hangarx-obsidian'];
+  if (mcpServers['hangarx-obsidian']) {
+    delete mcpServers['hangarx-obsidian'];
   }
-  const prev = existing.mcpServers['hangarx'];
+  const prev = mcpServers['hangarx'];
   const updated = !!prev;
   const unchanged = prev && JSON.stringify(prev) === JSON.stringify(entry);
-  existing.mcpServers['hangarx'] = entry;
+  mcpServers['hangarx'] = entry;
 
   // Ensure parent directory exists
   try {
@@ -184,11 +195,11 @@ async function upsertMcpEntry(
 
   try {
     await fs.writeFile(configPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
-  } catch (e: any) {
+  } catch (e: unknown) {
     return {
       ok: false,
       configPath,
-      message: `Couldn't write ${configPath}: ${e.message}`,
+      message: `Couldn't write ${configPath}: ${(e as Error)?.message ?? String(e)}`,
     };
   }
 
@@ -203,7 +214,7 @@ async function upsertMcpEntry(
     message = 'Added HangarX to existing config.';
   }
 
-  return { ok: true, configPath, message, updated, unchanged };
+  return { ok: true, configPath, message, updated, unchanged: !!unchanged };
 }
 
 /** Build the standard `mcpServers.hangarx-obsidian` entry shared by all three agents. */
@@ -262,32 +273,36 @@ export async function disconnectMcpEntry(configPath: string): Promise<ConnectRes
   let raw: string;
   try {
     raw = await fs.readFile(configPath, 'utf8');
-  } catch (e: any) {
-    if (e?.code === 'ENOENT') {
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err?.code === 'ENOENT') {
       return { ok: true, configPath, message: 'Already disconnected — no config file.', unchanged: true };
     }
-    return { ok: false, configPath, message: `Couldn't read ${configPath}: ${e.message}` };
+    return { ok: false, configPath, message: `Couldn't read ${configPath}: ${err?.message ?? String(e)}` };
   }
-  let parsed: Record<string, any>;
+  let parsed: Record<string, unknown>;
   try {
     parsed = raw.trim() ? JSON.parse(raw) : {};
-  } catch (e: any) {
-    return { ok: false, configPath, message: `Config file isn't valid JSON: ${e.message}` };
+  } catch (e: unknown) {
+    return { ok: false, configPath, message: `Config file isn't valid JSON: ${(e as Error)?.message ?? String(e)}` };
   }
   // Disconnect both the canonical 'hangarx' key and the legacy
   // 'hangarx-obsidian' key (used in plugin versions ≤0.0.9), so users
   // upgrading from an older install end up with a clean config.
-  const hadCanonical = !!parsed?.mcpServers?.['hangarx'];
-  const hadLegacy = !!parsed?.mcpServers?.['hangarx-obsidian'];
-  if (!parsed?.mcpServers || (!hadCanonical && !hadLegacy)) {
+  const mcpServers = parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)
+    ? parsed.mcpServers as Record<string, unknown>
+    : null;
+  const hadCanonical = !!mcpServers?.['hangarx'];
+  const hadLegacy = !!mcpServers?.['hangarx-obsidian'];
+  if (!mcpServers || (!hadCanonical && !hadLegacy)) {
     return { ok: true, configPath, message: 'Already disconnected.', unchanged: true };
   }
-  delete parsed.mcpServers['hangarx'];
-  delete parsed.mcpServers['hangarx-obsidian'];
+  delete mcpServers['hangarx'];
+  delete mcpServers['hangarx-obsidian'];
   try {
     await fs.writeFile(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
-  } catch (e: any) {
-    return { ok: false, configPath, message: `Couldn't write ${configPath}: ${e.message}` };
+  } catch (e: unknown) {
+    return { ok: false, configPath, message: `Couldn't write ${configPath}: ${(e as Error)?.message ?? String(e)}` };
   }
   return { ok: true, configPath, message: 'Removed HangarX from config.' };
 }
@@ -323,10 +338,12 @@ export async function checkConnection(configPath: string | null): Promise<{
     const parsed = JSON.parse(raw);
     // Recognize both the canonical id and the legacy one so existing
     // installs from plugin v≤0.0.9 still report as connected.
-    const entry = parsed?.mcpServers?.['hangarx'] ?? parsed?.mcpServers?.['hangarx-obsidian'];
+    const mcp = parsed?.mcpServers as Record<string, unknown> | undefined;
+    const entry = mcp?.['hangarx'] ?? mcp?.['hangarx-obsidian'];
     return { exists: true, connected: !!entry };
-  } catch (e: any) {
-    if (e?.code === 'ENOENT') return { exists: false, connected: false };
-    return { exists: true, connected: false, reason: e.message };
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err?.code === 'ENOENT') return { exists: false, connected: false };
+    return { exists: true, connected: false, reason: err?.message ?? String(e) };
   }
 }

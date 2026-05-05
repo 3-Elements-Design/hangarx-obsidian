@@ -1,7 +1,7 @@
 import { App, Modal, Notice, setIcon } from 'obsidian';
 import type CortexPlugin from '../main';
-import { GraphPullModal } from './graph-pull-modal';
 import { formatError, errorIcon } from '../services/error-format';
+import { confirmModal } from '../services/confirm-modal';
 
 type Action = 'push' | 'pull' | 'both' | 'force-reingest';
 
@@ -25,7 +25,7 @@ export class SyncModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass('cortex-sync-modal');
-    this.titleEl.setText('HangarX Sync');
+    this.titleEl.setText('Hangarx sync');
     void this.renderPicker();
   }
 
@@ -37,16 +37,18 @@ export class SyncModal extends Modal {
   // Picker
   // ────────────────────────────────────────────────────────────────────
 
-  private async renderPicker(): Promise<void> {
+  // No `await` inside; uses fire-and-forget Promise chains instead.
+  // Dropping `async` satisfies @typescript-eslint/require-await.
+  private renderPicker(): void {
     const c = this.contentEl;
     c.empty();
     c.addClass('cortex-sync-body');
-    this.titleEl.setText('HangarX Sync');
+    this.titleEl.setText('Hangarx sync');
 
     // ── Connection badge ────────────────────────────────────────────
     const s = this.plugin.settings;
     let host = s.apiUrl;
-    try { host = new URL(s.apiUrl).host; } catch {}
+    try { host = new URL(s.apiUrl).host; } catch { /* malformed apiUrl — fall back to the raw setting */ }
     const badge = c.createDiv({ cls: 'cortex-sync-badge' });
     const dot = badge.createSpan({ cls: 'cortex-sync-badge-dot' });
     dot.addClass(s.connectionMode === 'cloud' ? 'is-cloud' : 'is-local');
@@ -110,26 +112,30 @@ export class SyncModal extends Modal {
       text: `Auto-sync on startup: ${s.syncOnStartup ? 'On' : 'Off'} · `,
     });
     const link = footer.createEl('a', {
-      text: 'change in settings',
+      text: 'Change in settings',
       attr: { href: '#' },
     });
     link.addEventListener('click', evt => {
       evt.preventDefault();
       this.close();
-      (this.app as any).setting?.open?.();
-      (this.app as any).setting?.openTabById?.(this.plugin.manifest.id);
+      const settingApi = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
+      settingApi?.open?.();
+      settingApi?.openTabById?.(this.plugin.manifest.id);
     });
 
     // ── Async stats fill ────────────────────────────────────────────
-    void this.fillStats(vaultTile, graphTile, changesTile, banner);
+    this.fillStats(vaultTile, graphTile, changesTile, banner);
   }
 
-  private async fillStats(
+  // Uses `.then().catch()` chains for fire-and-forget; no `await` is
+  // necessary, so we drop `async` and the Promise return type to
+  // satisfy @typescript-eslint/require-await.
+  private fillStats(
     vaultTile: HTMLElement,
     graphTile: HTMLElement,
     changesTile: HTMLElement,
     banner: HTMLElement,
-  ): Promise<void> {
+  ): void {
     const fileCount = this.app.vault.getMarkdownFiles().length;
     this.setStatValue(vaultTile, fileCount.toLocaleString());
 
@@ -219,10 +225,14 @@ export class SyncModal extends Modal {
 
     if (action === 'force-reingest') {
       const fileCount = this.app.vault.getMarkdownFiles().length;
-      const ok = confirm(
-        `Force-resync ${fileCount} files into the knowledge graph?\n\n` +
-        `This wipes the local sync index and re-pushes every note. Use after the server graph has been reset (Docker volume wiped, container rebuilt). Your notes themselves aren't touched.`,
-      );
+      const ok = await confirmModal(this.app, {
+        title: `Force-resync ${fileCount} files?`,
+        body:
+          `This wipes the local sync index and re-pushes every note into the knowledge graph.\n\n` +
+          `Use after the server graph has been reset (Docker volume wiped, container rebuilt). Your notes themselves aren't touched.`,
+        confirmText: 'Force resync',
+        destructive: true,
+      });
       if (!ok) return;
       await this.runPush({ forceReingest: true });
       return;
@@ -248,9 +258,9 @@ export class SyncModal extends Modal {
     this.renderBackBar(c, () => inFlight);
 
     const phaseRow = c.createDiv({ cls: 'cortex-pull-phase-row' });
-    const phaseIcon = phaseRow.createEl('span', { cls: 'cortex-pull-phase-icon' });
+    const phaseIcon = phaseRow.createSpan({ cls: 'cortex-pull-phase-icon' });
     setIcon(phaseIcon, opts.forceReingest ? 'rotate-cw' : 'arrow-up');
-    const phaseEl = phaseRow.createEl('span', {
+    const phaseEl = phaseRow.createSpan({
       cls: 'cortex-pull-phase-label',
       text: opts.forceReingest ? 'Clearing local index…' : 'Pushing vault…',
     });
@@ -296,7 +306,7 @@ export class SyncModal extends Modal {
           if (cancelling) return; // freeze the progress UI while draining
           if (total > 0) {
             const pct = Math.min(100, Math.round((done / total) * 100));
-            barFill.style.width = `${pct}%`;
+            barFill.setCssStyles({ width: `${pct}%` });
           }
           const verb = phase === 'sync' ? 'Syncing' : 'Removing';
           const where = currentPath ? ` · ${currentPath.split('/').pop()}` : '';
@@ -305,7 +315,7 @@ export class SyncModal extends Modal {
         },
       });
       barFill.addClass('cortex-pull-bar-done');
-      barFill.style.width = '100%';
+      barFill.setCssStyles({ width: '100%' });
       phaseEl.setText('Push complete');
       messageEl.empty();
       inFlight = false;
@@ -359,11 +369,11 @@ export class SyncModal extends Modal {
   private preflight(): boolean {
     const s = this.plugin.settings;
     if (!s.apiKey && s.connectionMode === 'cloud') {
-      new Notice('HangarX: API key is empty. Open Settings → Connection.');
+      new Notice('HangarX: API key is empty. Open settings → connection.');
       return false;
     }
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open Settings → Connection.');
+      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
       return false;
     }
     return true;
@@ -425,10 +435,14 @@ export class SyncModal extends Modal {
     btn.createSpan({ text: 'Back to sync menu' });
     btn.addEventListener('click', () => {
       if (isInFlight()) {
-        const ok = confirm(
-          'A sync is currently running. Going back hides the progress UI but the sync keeps running. Continue?',
-        );
-        if (!ok) return;
+        void confirmModal(this.app, {
+          title: 'Sync is still running',
+          body: 'Going back hides the progress UI but the sync keeps running. Continue?',
+          confirmText: 'Hide and continue',
+        }).then(ok => {
+          if (ok) void this.renderPicker();
+        });
+        return;
       }
       void this.renderPicker();
     });
@@ -442,10 +456,10 @@ export class SyncModal extends Modal {
   }
 
   private renderError(
-    rootEl: HTMLElement,
+    _rootEl: HTMLElement,
     statsEl: HTMLElement,
     btnRow: HTMLElement,
-    cancelBtn: HTMLButtonElement,
+    _cancelBtn: HTMLButtonElement,
     err: unknown,
     onRetry: () => void,
   ): void {

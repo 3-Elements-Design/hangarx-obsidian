@@ -27,36 +27,37 @@ export class GraphPullModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.modalEl.addClass('cortex-pull-modal');
+    // Sentence case for UI text — required by Obsidian's style guide.
     const baseTitle =
-      this.mode === 'pull' ? 'Pulling Cortex Graph' :
-      this.mode === 'preview' ? 'Preview Graph Pull' :
-      'Cortex Graph Summary';
+      this.mode === 'pull' ? 'Pulling Cortex graph' :
+      this.mode === 'preview' ? 'Preview graph pull' :
+      'Cortex graph summary';
     this.titleEl.setText(baseTitle);
 
     const content = this.contentEl;
     content.empty();
 
     // Phase indicator
-    const phaseRow = content.createEl('div', { cls: 'cortex-pull-phase-row' });
-    const phaseIcon = phaseRow.createEl('span', { cls: 'cortex-pull-phase-icon' });
+    const phaseRow = content.createDiv({ cls: 'cortex-pull-phase-row' });
+    const phaseIcon = phaseRow.createSpan({ cls: 'cortex-pull-phase-icon' });
     setIcon(phaseIcon, 'download-cloud');
-    this.phaseEl = phaseRow.createEl('span', {
+    this.phaseEl = phaseRow.createSpan({
       cls: 'cortex-pull-phase-label',
       text: 'Initializing…',
     });
 
     // Message
-    this.messageEl = content.createEl('div', { cls: 'cortex-pull-message' });
+    this.messageEl = content.createDiv({ cls: 'cortex-pull-message' });
 
     // Progress bar
-    const barWrap = content.createEl('div', { cls: 'cortex-pull-bar-wrap' });
-    this.barFill = barWrap.createEl('div', { cls: 'cortex-pull-bar-fill' });
+    const barWrap = content.createDiv({ cls: 'cortex-pull-bar-wrap' });
+    this.barFill = barWrap.createDiv({ cls: 'cortex-pull-bar-fill' });
 
     // Stats area (populated on completion)
-    this.statsEl = content.createEl('div', { cls: 'cortex-pull-stats' });
+    this.statsEl = content.createDiv({ cls: 'cortex-pull-stats' });
 
     // Cancel button
-    const btnRow = content.createEl('div', { cls: 'cortex-pull-btn-row' });
+    const btnRow = content.createDiv({ cls: 'cortex-pull-btn-row' });
     this.cancelBtn = btnRow.createEl('button', { text: 'Cancel', cls: 'cortex-pull-cancel' });
     this.cancelBtn.addEventListener('click', () => {
       this.cancelled = true;
@@ -85,13 +86,13 @@ export class GraphPullModal extends Modal {
 
     this.barFill.removeClass('cortex-pull-bar-indeterminate');
     this.barFill.addClass('cortex-pull-bar-done');
-    this.barFill.style.width = '100%';
+    this.barFill.setCssStyles({ width: '100%' });
     this.phaseEl.setText('Summary');
-    this.messageEl.setText('Fast estimate from graph stats — run Preview for exact counts.');
+    this.messageEl.setText('Fast estimate from graph stats — run preview for exact counts.');
 
     this.statsEl.empty();
 
-    const grid = this.statsEl.createEl('div', { cls: 'cortex-pull-stat-grid' });
+    const grid = this.statsEl.createDiv({ cls: 'cortex-pull-stat-grid' });
     this.statItem(grid, 'database', `${summary.cloudTotal.toLocaleString()} entities in cloud`, 'cortex-pull-stat-total');
     this.statItem(grid, 'hard-drive', `${summary.localTotal.toLocaleString()} pulled locally`, 'cortex-pull-stat-update');
     this.statItem(grid, 'plus-circle', `~${summary.estNew.toLocaleString()} would be new`, 'cortex-pull-stat-create');
@@ -127,7 +128,7 @@ export class GraphPullModal extends Modal {
     this.showResult(result);
 
     // Auto-close after 4 seconds
-    setTimeout(() => {
+    activeWindow.setTimeout(() => {
       if (!this.cancelled) this.close();
     }, 4000);
   }
@@ -138,13 +139,13 @@ export class GraphPullModal extends Modal {
 
     this.phaseEl.setText('Preview complete');
     this.messageEl.setText('');
-    this.barFill.style.width = '100%';
+    this.barFill.setCssStyles({ width: '100%' });
     this.barFill.addClass('cortex-pull-bar-done');
 
     this.statsEl.empty();
-    this.statsEl.createEl('div', { cls: 'cortex-pull-stat-header', text: 'What would happen:' });
+    this.statsEl.createDiv({ cls: 'cortex-pull-stat-header', text: 'What would happen:' });
 
-    const grid = this.statsEl.createEl('div', { cls: 'cortex-pull-stat-grid' });
+    const grid = this.statsEl.createDiv({ cls: 'cortex-pull-stat-grid' });
     this.statItem(grid, 'plus-circle', `${preview.toCreate.length} new files`, 'cortex-pull-stat-create');
     this.statItem(grid, 'edit-3', `${preview.toUpdate.length} updated`, 'cortex-pull-stat-update');
     this.statItem(grid, 'trash-2', `${preview.toDelete.length} removed`, 'cortex-pull-stat-delete');
@@ -180,27 +181,27 @@ export class GraphPullModal extends Modal {
 
     if (p.total > 0) {
       const pct = Math.min(100, Math.round((p.current / p.total) * 100));
-      this.barFill.style.width = `${pct}%`;
+      this.barFill.setCssStyles({ width: `${pct}%` });
     } else if (p.phase === 'fetching') {
       // Indeterminate — pulse
       this.barFill.addClass('cortex-pull-bar-indeterminate');
-      this.barFill.style.width = '';
+      this.barFill.setCssStyles({ width: '' });
     }
 
     if (p.phase === 'done') {
       this.barFill.removeClass('cortex-pull-bar-indeterminate');
       this.barFill.addClass('cortex-pull-bar-done');
-      this.barFill.style.width = '100%';
+      this.barFill.setCssStyles({ width: '100%' });
     }
   }
 
   private showResult(result: PullResult): void {
-    this.phaseEl.setText('✓ Pull complete');
+    this.phaseEl.setText('✓ pull complete');
     this.messageEl.setText('');
     this.cancelBtn.setText('Close');
 
     this.statsEl.empty();
-    const grid = this.statsEl.createEl('div', { cls: 'cortex-pull-stat-grid' });
+    const grid = this.statsEl.createDiv({ cls: 'cortex-pull-stat-grid' });
     this.statItem(grid, 'plus-circle', `${result.created} created`, 'cortex-pull-stat-create');
     this.statItem(grid, 'edit-3', `${result.updated} updated`, 'cortex-pull-stat-update');
     this.statItem(grid, 'trash-2', `${result.deleted} removed`, 'cortex-pull-stat-delete');
@@ -227,21 +228,21 @@ export class GraphPullModal extends Modal {
     const fmt = formatError(rawMessage, 'Couldn\'t pull graph');
     this.phaseEl.setText('Error');
     this.barFill.addClass('cortex-pull-bar-error');
-    this.barFill.style.width = '100%';
+    this.barFill.setCssStyles({ width: '100%' });
 
     // Replace the message-line + stats area with a structured error card.
     this.messageEl.empty();
     this.messageEl.removeClass('cortex-pull-error-msg');
     this.statsEl.empty();
 
-    const card = this.statsEl.createEl('div', { cls: `cortex-error-card cortex-error-${fmt.kind}` });
-    const head = card.createEl('div', { cls: 'cortex-error-head' });
-    const ic = head.createEl('span', { cls: 'cortex-error-icon' });
+    const card = this.statsEl.createDiv({ cls: `cortex-error-card cortex-error-${fmt.kind}` });
+    const head = card.createDiv({ cls: 'cortex-error-head' });
+    const ic = head.createSpan({ cls: 'cortex-error-icon' });
     setIcon(ic, errorIcon(fmt.kind));
-    head.createEl('span', { cls: 'cortex-error-headline', text: fmt.headline });
+    head.createSpan({ cls: 'cortex-error-headline', text: fmt.headline });
 
     if (fmt.hint) {
-      card.createEl('div', { cls: 'cortex-error-hint', text: fmt.hint });
+      card.createDiv({ cls: 'cortex-error-hint', text: fmt.hint });
     }
 
     const detailWrap = card.createEl('details', { cls: 'cortex-error-detail-wrap' });
@@ -250,14 +251,14 @@ export class GraphPullModal extends Modal {
       .createEl('code', { text: fmt.detail });
 
     // Replace the bottom button row: Retry + Copy + Close.
-    const btnRow = card.createEl('div', { cls: 'cortex-error-actions' });
+    const btnRow = card.createDiv({ cls: 'cortex-error-actions' });
     const retryBtn = btnRow.createEl('button', { text: 'Retry', cls: 'mod-cta' });
-    retryBtn.addEventListener('click', async () => {
+    retryBtn.addEventListener('click', () => { void (async () => {
       // Reset modal state and re-run the same pull/preview.
       this.statsEl.empty();
       this.messageEl.setText('');
       this.barFill.removeClass('cortex-pull-bar-error');
-      this.barFill.style.width = '0%';
+      this.barFill.setCssStyles({ width: '0%' });
       this.phaseEl.setText('Initializing…');
       try {
         if (this.mode === 'pull') await this.runPull();
@@ -265,25 +266,25 @@ export class GraphPullModal extends Modal {
       } catch (e) {
         this.showError((e as Error).message);
       }
-    });
+    })(); });
 
     const copyBtn = btnRow.createEl('button', { text: 'Copy details' });
-    copyBtn.addEventListener('click', async () => {
+    copyBtn.addEventListener('click', () => { void (async () => {
       const payload = `${fmt.headline}\n\n${fmt.detail}${fmt.hint ? `\n\nHint: ${fmt.hint}` : ''}`;
       await navigator.clipboard.writeText(payload);
       copyBtn.setText('Copied');
-      setTimeout(() => copyBtn.setText('Copy details'), 1400);
-    });
+      activeWindow.setTimeout(() => copyBtn.setText('Copy details'), 1400);
+    })(); });
 
     // The pre-existing Cancel button below now reads "Close".
     this.cancelBtn.setText('Close');
   }
 
   private statItem(parent: HTMLElement, icon: string, text: string, cls: string): void {
-    const item = parent.createEl('div', { cls: `cortex-pull-stat ${cls}` });
-    const ic = item.createEl('span', { cls: 'cortex-pull-stat-icon' });
+    const item = parent.createDiv({ cls: `cortex-pull-stat ${cls}` });
+    const ic = item.createSpan({ cls: 'cortex-pull-stat-icon' });
     setIcon(ic, icon);
-    item.createEl('span', { text });
+    item.createSpan({ text });
   }
 
   onClose(): void {

@@ -1,5 +1,5 @@
 import { EditorView, ViewPlugin, ViewUpdate, Decoration, DecorationSet, WidgetType, keymap } from '@codemirror/view';
-import { StateEffect, StateField, EditorState, Prec, Extension } from '@codemirror/state';
+import { StateEffect, StateField, Prec, Extension } from '@codemirror/state';
 import type { CortexClient } from '../cortex-client';
 
 /**
@@ -42,7 +42,7 @@ const suggestionField = StateField.define<Suggestion | null>({
 class GhostWidget extends WidgetType {
   constructor(private text: string) { super(); }
   toDOM(): HTMLElement {
-    const span = document.createElement('span');
+    const span = activeDocument.createSpan();
     span.className = 'cortex-inline-ghost';
     span.textContent = this.text;
     return span;
@@ -52,7 +52,7 @@ class GhostWidget extends WidgetType {
 
 const ghostDecorations = StateField.define<DecorationSet>({
   create: () => Decoration.none,
-  update(value, tr) {
+  update(_value, tr) {
     const sug = tr.state.field(suggestionField);
     if (!sug) return Decoration.none;
     // Render ghost text immediately AFTER the token end, showing what would be appended/wrapped.
@@ -100,7 +100,7 @@ export function inlineSuggestionsExtension(
           return;
         }
         if (this.timer !== null) window.clearTimeout(this.timer);
-        this.timer = window.setTimeout(() => this.recompute(), 300);
+        this.timer = window.setTimeout(() => { void this.recompute(); }, 300);
       }
 
       destroy(): void {

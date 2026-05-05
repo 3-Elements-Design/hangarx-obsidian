@@ -35,7 +35,11 @@ export class ChatView extends ItemView {
   getDisplayText(): string { return 'HangarX: Ask your vault'; }
   getIcon(): string { return 'message-circle'; }
 
-  async onOpen(): Promise<void> {
+  // Obsidian's View.onOpen / onClose accept either sync or Promise
+  // returns; nothing here awaits, so we drop `async` to satisfy
+  // @typescript-eslint/require-await and return resolved Promises so
+  // the override-signature stays Promise<void>.
+  onOpen(): Promise<void> {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('cortex-chat-view');
@@ -54,11 +58,13 @@ export class ChatView extends ItemView {
       saveSettings: () => this.plugin.saveSettings(),
     });
     this.panel.mount();
+    return Promise.resolve();
   }
 
-  async onClose(): Promise<void> {
+  onClose(): Promise<void> {
     this.panel?.dispose();
     this.panel = null;
+    return Promise.resolve();
   }
 
   /** Programmatic prefill — used by Memory Stats drill-in actions. */

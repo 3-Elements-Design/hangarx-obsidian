@@ -53,8 +53,9 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
   await app.vault.createFolder(normalized);
 }
 
-/** Generate a unique note path, appending (2), (3), etc. if needed. */
-async function uniquePath(app: App, folder: string, basename: string): Promise<string> {
+/** Generate a unique note path, appending (2), (3), etc. if needed.
+ *  Synchronous — `getAbstractFileByPath` is sync; no awaits needed. */
+function uniquePath(app: App, folder: string, basename: string): string {
   const base = normalizePath(`${folder}/${basename}`);
   let path = `${base}.md`;
   let i = 2;
@@ -80,7 +81,7 @@ export async function writeSingleAnswerNote(
 ): Promise<string> {
   await ensureFolder(app, folder);
   const title = sanitize(question.slice(0, 60));
-  const path = await uniquePath(app, folder, `${dateStamp()} - ${title}`);
+  const path = uniquePath(app, folder, `${dateStamp()} - ${title}`);
 
   const frontmatter = [
     '---',
@@ -119,7 +120,7 @@ export async function writeConversationNote(
 ): Promise<string> {
   await ensureFolder(app, folder);
   const title = sanitize(data.title || 'Untitled Chat');
-  const path = await uniquePath(app, folder, `${dateStamp(data.createdAt)} - ${title}`);
+  const path = uniquePath(app, folder, `${dateStamp(data.createdAt)} - ${title}`);
 
   const frontmatter = [
     '---',
@@ -162,7 +163,7 @@ export async function writeMemoryNote(
 ): Promise<string> {
   await ensureFolder(app, folder);
   const title = sanitize(data.title || data.content.slice(0, 50));
-  const path = await uniquePath(app, folder, `${dateStamp()} - ${title}`);
+  const path = uniquePath(app, folder, `${dateStamp()} - ${title}`);
 
   const frontmatter = [
     '---',

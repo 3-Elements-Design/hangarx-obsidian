@@ -17,10 +17,10 @@ export class ReadmeModal extends Modal {
   async onOpen(): Promise<void> {
     this.modalEl.addClass('cortex-readme-modal');
     this.titleEl.empty();
-    const title = this.titleEl.createEl('div', { cls: 'cortex-readme-title' });
-    title.createEl('span', { text: 'HangarX — Documentation' });
+    const title = this.titleEl.createDiv({ cls: 'cortex-readme-title' });
+    title.createSpan({ text: 'HangarX — Documentation' });
 
-    const actions = title.createEl('div', { cls: 'cortex-readme-title-actions' });
+    const actions = title.createDiv({ cls: 'cortex-readme-title-actions' });
     const externalBtn = actions.createEl('button', {
       cls: 'cortex-readme-iconbtn',
       attr: { 'aria-label': 'Open online docs' },
@@ -32,7 +32,7 @@ export class ReadmeModal extends Modal {
 
     const body = this.contentEl.createDiv({ cls: 'cortex-readme-body markdown-rendered' });
     this.renderComponent.load();
-    await MarkdownRenderer.render(this.app, readmeContent as string, body, '', this.renderComponent);
+    await MarkdownRenderer.render(this.app, readmeContent, body, '', this.renderComponent);
 
     body.querySelectorAll('a[href]').forEach(el => {
       const a = el as HTMLAnchorElement;
