@@ -1,7 +1,7 @@
 {
   "id": "hangarx",
   "name": "HangarX",
-  "version": "0.0.10",
+  "version": "1.0.1",
   "minAppVersion": "1.8.7",
   "description": "Turn your vault into a queryable knowledge graph that Claude, Cursor, Cline, Windsurf, and Claude Code can read and write to via MCP.",
   "author": "HangarX",
