@@ -1,0 +1,32 @@
+# NEVER commit Obsidian per-plugin runtime data — it contains the user's
+# secrets (API keys, MCP tokens, encryption keys, workspace IDs). The file
+# is written by Obsidian itself when the plugin runs, and lands in this
+# folder when the dev install uses `npm run install:vault` to symlink the
+# source tree into the vault's `.obsidian/plugins/hangarx-obsidian/`.
+data.json
+data-*.json
+
+# Obsidian writes hot-reload config here too
+hot-reload.json
+
+# Local dev environment
+.env
+.env.local
+.env.*.local
+
+# Built artifact (generated, fine to ignore in source — release workflow
+# rebuilds and force-adds it for the public mirror)
+main.js
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+.AppleDouble
+
+# Editor
+.vscode/
+.idea/
+*.swp
