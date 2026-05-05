@@ -13,7 +13,7 @@ export class RelatedView extends ItemView {
   }
 
   getViewType(): string { return RELATED_VIEW_TYPE; }
-  getDisplayText(): string { return 'HangarX: Related'; }
+  getDisplayText(): string { return 'Related notes'; }
   getIcon(): string { return 'network'; }
 
   async onOpen(): Promise<void> {

@@ -13,6 +13,10 @@ export interface ChatConversation {
   createdAt: number;
   updatedAt: number;
   turns: ChatTurn[];
+  /** User-flagged as a useful query worth re-running. Surfaces in the
+   *  history popover and feeds the onboarding "star a useful query"
+   *  milestone. */
+  starred?: boolean;
 }
 
 const FILENAME = 'conversations.json';

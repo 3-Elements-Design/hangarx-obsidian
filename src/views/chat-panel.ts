@@ -159,6 +159,7 @@ export class ChatPanel {
   private newChatBtn!: HTMLButtonElement;
   private exportBtn!: HTMLButtonElement;
   private historyBtn!: HTMLButtonElement;
+  private starBtn!: HTMLButtonElement;
   private historyPopover: HTMLElement | null = null;
 
   private sessionId: string;
@@ -166,6 +167,7 @@ export class ChatPanel {
   private currentTurns: ChatTurn[] = [];
   private currentTitle = '';
   private currentCreatedAt = 0;
+  private currentStarred = false;
   private allEntities: AskEntity[] = [];
   private allCitations: AskCitation[] = [];
 
@@ -213,6 +215,18 @@ export class ChatPanel {
       evt.stopPropagation();
       this.toggleHistoryPopover();
     });
+
+    // Star toggle — flags the current conversation as a useful query.
+    // Hidden until the conversation has at least one assistant turn so
+    // there's something to star. Persisted via ConversationStore so the
+    // history popover + onboarding milestone see it.
+    this.starBtn = actions.createEl('button', {
+      cls: 'cortex-chat-iconbtn cortex-chat-star',
+      attr: { 'aria-label': 'Star this conversation', title: 'Star this conversation' },
+    });
+    setIcon(this.starBtn, 'star');
+    this.starBtn.addEventListener('click', () => { void this.toggleStarred(); });
+    this.starBtn.addClass('is-hidden');
 
     this.newChatBtn = actions.createEl('button', { cls: 'cortex-chat-iconbtn', attr: { 'aria-label': 'New chat' } });
     setIcon(this.newChatBtn, 'plus');
@@ -459,6 +473,7 @@ export class ChatPanel {
     this.currentTurns = [];
     this.currentTitle = '';
     this.currentCreatedAt = 0;
+    this.currentStarred = false;
     this.allEntities = [];
     this.allCitations = [];
     this.pendingAttachments = [];
@@ -467,6 +482,7 @@ export class ChatPanel {
     this.renderEmptyState();
     this.inputEl.value = '';
     this.autoResize();
+    this.refreshStarBtn();
     this.askBtn.setAttr('disabled', 'true');
     this.exportBtn.addClass('is-hidden');
     this.closeHistoryPopover();
@@ -597,6 +613,7 @@ export class ChatPanel {
     this.currentTurns = [...c.turns];
     this.currentTitle = c.title;
     this.currentCreatedAt = c.createdAt;
+    this.currentStarred = !!c.starred;
     this.hasMessages = c.turns.length > 0;
 
     this.outputEl.empty();
@@ -606,6 +623,7 @@ export class ChatPanel {
     }
     this.scrollToBottom();
     this.inputEl.focus();
+    this.refreshStarBtn();
   }
 
   private renderUserTurn(text: string, attachmentSummary?: string): void {
@@ -641,7 +659,7 @@ export class ChatPanel {
    * affordance. Use the per-bubble Save-to-note action instead.
    */
   private decorateBubble(bubble: HTMLElement, _content: string, createdAt: number): void {
-    const roleEl = bubble.querySelector('.cortex-chat-role') as HTMLElement | null;
+    const roleEl = bubble.querySelector<HTMLElement>('.cortex-chat-role');
     if (!roleEl) return;
     const refreshTitle = () => {
       roleEl.title = `${relativeTime(createdAt)} · ${new Date(createdAt).toLocaleString()}`;
@@ -664,8 +682,35 @@ export class ChatPanel {
       createdAt: this.currentCreatedAt,
       updatedAt: Date.now(),
       turns: this.currentTurns,
+      starred: this.currentStarred,
     };
     await this.store.upsert(conversation).catch(e => console.warn('[Cortex] Save chat failed:', e));
+  }
+
+  /**
+   * Toggle the star flag on the current conversation, persist, and
+   * update the button visual. Closes the onboarding "star a useful
+   * query" milestone the first time it's set.
+   */
+  private async toggleStarred(): Promise<void> {
+    this.currentStarred = !this.currentStarred;
+    this.refreshStarBtn();
+    await this.persistConversation();
+    new Notice(this.currentStarred ? '★ Starred — saved to your library' : 'Star removed');
+  }
+
+  /**
+   * Show / hide the star button + reflect filled-vs-outline state.
+   * Hidden until at least one assistant turn exists (nothing to star).
+   */
+  private refreshStarBtn(): void {
+    if (!this.starBtn) return;
+    const hasAiTurn = this.currentTurns.some((t) => t.role === 'ai');
+    this.starBtn.toggleClass('is-hidden', !hasAiTurn);
+    this.starBtn.toggleClass('is-on', !!this.currentStarred);
+    this.starBtn.empty();
+    setIcon(this.starBtn, this.currentStarred ? 'star' : 'star');
+    this.starBtn.title = this.currentStarred ? 'Remove star' : 'Star this conversation';
   }
 
   private async submit(): Promise<void> {
@@ -697,6 +742,7 @@ export class ChatPanel {
         await this.safeRenderMarkdown(msg, answerEl);
         this.currentTurns.push({ role: 'ai', content: msg });
         this.exportBtn.removeClass('is-hidden');
+        this.refreshStarBtn();
         void this.persistConversation();
       } catch (e) {
         thinkingEl.remove();
@@ -879,7 +925,7 @@ export class ChatPanel {
               if (ev.answer) {
                 body.createDiv({ cls: 'cortex-chat-subrun-answer', text: ev.answer });
               }
-              if (ev.childRunId) {
+              if (ev.childRunId && this.settings.connectionMode === 'cloud') {
                 const link = body.createEl('a', {
                   cls: 'cortex-chat-agent-link',
                   href: this.dashboardRunUrl(ev.childRunId),
@@ -986,6 +1032,7 @@ export class ChatPanel {
 
       this.currentTurns.push({ role: 'ai', content: res.answer, payload: res });
       this.exportBtn.removeClass('is-hidden');
+      this.refreshStarBtn();
       void this.persistConversation();
 
       if (this.settings.autoSaveChatToVault) {
@@ -1200,12 +1247,12 @@ export class ChatPanel {
       const reasonChip = wrap.createSpan({ cls: 'cortex-chat-agent-chip cortex-chat-agent-chip-warn' });
       reasonChip.setText(res.reason);
     }
-    if (res.runId) {
-      // The dashboard URL is the same origin the user already uses for
-      // their workspace. We derive it from cortexBaseUrl by replacing
-      // the API host with the canonical web host, falling back to a
-      // relative-style suggestion when the user is on a self-hosted
-      // setup we can't infer.
+    // "View run" → cloud-only. The replay viewer lives on the hosted
+    // dashboard (`app.HangarX.ai/agents/runs/<id>`); local-mode runs
+    // have no equivalent UI, so showing the link there leads to a 404.
+    // Gate on connectionMode rather than guessing from apiUrl so users
+    // self-hosting against the cloud schema (rare) still see it.
+    if (res.runId && this.settings.connectionMode === 'cloud') {
       const dashUrl = this.dashboardRunUrl(res.runId);
       const link = wrap.createEl('a', {
         cls: 'cortex-chat-agent-link',
@@ -1490,41 +1537,14 @@ export class ChatPanel {
         return;
       }
     }
-    // Post-process: TOC, entity highlight, citations, code toolbar,
-    // wikilink hover preview. Order matters — TOC must run first because
-    // entity highlight + citation pills walk text nodes that the TOC
-    // would otherwise interleave with new heading-anchor markup.
-    this.addTableOfContents(target);
+    // Post-process: entity highlight, citations, code toolbar, wikilink
+    // hover preview. The previous "In this answer" mini-TOC was removed
+    // because it cluttered the chat for essay-length responses without
+    // adding much value — Obsidian's editor scroll handles navigation.
     if (entities.length > 0) this.highlightEntities(target, entities);
     if (citations.length > 0) this.linkifyCitations(target, citations);
     this.addCodeBlockToolbars(target);
     this.attachWikilinkPreviews(target);
-  }
-
-  /**
-   * Insert a clickable mini table-of-contents at the top of the answer
-   * when the assistant produced 5+ headings. Cheap navigation aid for
-   * essay-length responses.
-   */
-  private addTableOfContents(root: HTMLElement): void {
-    const headings = Array.from(root.querySelectorAll('h1, h2, h3')) as HTMLElement[];
-    if (headings.length < 5) return;
-    const toc = activeDocument.createElement('div');
-    toc.className = 'cortex-chat-toc';
-    const label = toc.createDiv({ cls: 'cortex-chat-toc-label', text: 'In this answer' });
-    const list = toc.createEl('ul', { cls: 'cortex-chat-toc-list' });
-    headings.forEach((h, i) => {
-      const id = `toc-${Date.now()}-${i}`;
-      h.id = id;
-      const li = list.createEl('li');
-      const a = li.createEl('a', { text: h.textContent ?? '', cls: `cortex-chat-toc-${h.tagName.toLowerCase()}` });
-      a.href = `#${id}`;
-      a.addEventListener('click', (evt) => {
-        evt.preventDefault();
-        h.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    });
-    root.insertBefore(toc, root.firstChild);
   }
 
   /**
@@ -1713,22 +1733,24 @@ export class ChatPanel {
       copyBtn.title = 'Copy to clipboard';
       const copyIc = copyBtn.appendChild(activeDocument.createElement('span'));
       setIcon(copyIc, 'copy');
-      copyBtn.addEventListener('click', async (evt) => {
+      copyBtn.addEventListener('click', (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(text);
-          new Notice('Copied to clipboard.');
-        } catch {
-          new Notice('Copy failed.');
-        }
+        void (async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            new Notice('Copied to clipboard.');
+          } catch {
+            new Notice('Copy failed.');
+          }
+        })();
       });
       const saveBtn = activeDocument.createElement('button');
       saveBtn.className = 'cortex-code-toolbar-btn';
       saveBtn.title = 'Save to a new note';
       const saveIc = saveBtn.appendChild(activeDocument.createElement('span'));
       setIcon(saveIc, 'file-plus');
-      saveBtn.addEventListener('click', async (evt) => {
+      saveBtn.addEventListener('click', (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
         const lang = code?.className?.match(/language-([\w+-]+)/)?.[1] ?? '';
@@ -1736,13 +1758,15 @@ export class ChatPanel {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const fileName = `Code snippet ${stamp}.md`;
         const body = `${fence}${lang}\n${text}\n${fence}\n`;
-        try {
-          const file = await this.app.vault.create(fileName, body);
-          await this.app.workspace.getLeaf(false).openFile(file);
-          this.host.onNavigate();
-        } catch (e) {
-          new Notice(`Couldn't save snippet: ${(e as Error).message}`);
-        }
+        void (async () => {
+          try {
+            const file = await this.app.vault.create(fileName, body);
+            await this.app.workspace.getLeaf(false).openFile(file);
+            this.host.onNavigate();
+          } catch (e) {
+            new Notice(`Couldn't save snippet: ${(e as Error).message}`);
+          }
+        })();
       });
       toolbar.appendChild(copyBtn);
       toolbar.appendChild(saveBtn);
@@ -2231,10 +2255,8 @@ export class ChatPanel {
       if (input) {
         // Use HTMLInputElement.prototype's native setter directly — the
         // immediate proto doesn't own the `value` setter.
-        const nativeSetter = Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype, 'value',
-        )?.set;
-        if (nativeSetter) nativeSetter.call(input, query);
+        const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+        if (desc?.set) desc.set.call(input, query);
         else input.value = query;
 
         // Real InputEvent — Obsidian binds via oninput and some handlers

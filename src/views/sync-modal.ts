@@ -369,11 +369,11 @@ export class SyncModal extends Modal {
   private preflight(): boolean {
     const s = this.plugin.settings;
     if (!s.apiKey && s.connectionMode === 'cloud') {
-      new Notice('HangarX: API key is empty. Open settings → connection.');
+      new Notice('API key is empty. Open settings → connection.');
       return false;
     }
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
+      new Notice('Workspace ID is empty. Open settings → connection.');
       return false;
     }
     return true;

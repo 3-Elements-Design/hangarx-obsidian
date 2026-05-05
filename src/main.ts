@@ -182,10 +182,10 @@ export default class CortexPlugin extends Plugin {
     // dialog so users can verify the graph state at a glance. Chat lives
     // permanently in the right sidebar (no ribbon needed) and Connect agents
     // is a one-time setup task that belongs in settings.
-    this.addRibbonIcon('refresh-cw', 'HangarX: Sync', () => {
+    this.addRibbonIcon('refresh-cw', 'Sync', () => {
       new SyncModal(this.app, this).open();
     });
-    this.addRibbonIcon('bar-chart-3', 'HangarX: Knowledge graph stats', () => {
+    this.addRibbonIcon('bar-chart-3', 'Knowledge graph stats', () => {
       new GraphStatsModal(this.app, this.client, this).open();
     });
 
@@ -227,7 +227,7 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-show-onboarding',
-      name: 'Show onboarding panel (Get started)',
+      name: 'Show onboarding panel',
       callback: () => this.activateOnboardingView(),
     });
 
@@ -245,7 +245,7 @@ export default class CortexPlugin extends Plugin {
 
     this.addCommand({
       id: 'cortex-2-connect-agents',
-      name: 'Connect agents (Claude, Cursor)…',
+      name: 'Connect agents…',
       callback: () => {
         const settingApi = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
         settingApi?.open?.();
@@ -301,7 +301,7 @@ export default class CortexPlugin extends Plugin {
       callback: async () => {
         const url = await promptForText(this.app, 'Ingest URL', 'Paste a URL to scrape and add to your knowledge graph.');
         if (!url) return;
-        const notice = new Notice('HangarX: Ingesting URL…', 0);
+        const notice = new Notice('Ingesting URL…', 0);
         try {
           const result = await this.client.ingestUrl(url);
           notice.hide();
@@ -322,7 +322,7 @@ export default class CortexPlugin extends Plugin {
       this.app.workspace.on('file-menu', (menu, file) => {
         if (!('extension' in file) || (file as { extension?: string }).extension !== 'md') return;
         menu.addItem(item => {
-          item.setTitle('HangarX: Sync to knowledge graph')
+          item.setTitle('Sync to knowledge graph')
             .setIcon('refresh-cw')
             .onClick(() => void this.runSyncCurrentNote(file as import('obsidian').TFile));
         });
@@ -333,7 +333,7 @@ export default class CortexPlugin extends Plugin {
         const file = view?.file;
         if (!file || file.extension !== 'md') return;
         menu.addItem(item => {
-          item.setTitle('HangarX: Sync this note to knowledge graph')
+          item.setTitle('Sync this note to knowledge graph')
             .setIcon('refresh-cw')
             .onClick(() => void this.runSyncCurrentNote(file));
         });
@@ -341,7 +341,7 @@ export default class CortexPlugin extends Plugin {
     );
 
     // Wait for the vault to finish initial scan before wiring file events.
-    this.app.workspace.onLayoutReady(async () => {
+    this.app.workspace.onLayoutReady(() => {
       this.registerEvent(this.app.vault.on('create', f => this.sync.scheduleFileSync(f)));
       this.registerEvent(this.app.vault.on('modify', f => this.sync.scheduleFileSync(f)));
       this.registerEvent(this.app.vault.on('delete', f => this.sync.handleDelete(f)));
@@ -382,15 +382,21 @@ export default class CortexPlugin extends Plugin {
     });
   }
 
-  async onunload(): Promise<void> {
-    
-    
+  onunload(): void {
     cancelSignIn();
-    await this.mcp?.stop().catch(() => undefined);
+    void this.mcp?.stop().catch(() => undefined);
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+    const stored = (await this.loadData()) as Partial<CortexSettings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+    // Auto-exclude the user's actual config folder. configDir defaults to
+    // `.obsidian` but users can customise it; inject at runtime so we never
+    // hardcode the literal path in saved settings.
+    const configPrefix = `${this.app.vault.configDir}/`;
+    if (!this.settings.excludePatterns.includes(configPrefix)) {
+      this.settings.excludePatterns = [configPrefix, ...this.settings.excludePatterns];
+    }
     // One-shot migration: existing installs persisted the old `.com` cloud
     // host before we cut over to `.ai`. Rewrite it on load so users don't
     // have to manually edit the field.
@@ -494,11 +500,11 @@ export default class CortexPlugin extends Plugin {
    */
   private buildCloudGraphPull(): GraphPull | null {
     if (!this.settings.apiKey) {
-      new Notice('HangarX: Cloud API key is empty. Open settings → connection details and sign in or paste a key.');
+      new Notice('Cloud API key is empty. Open settings → connection details and sign in or paste a key.');
       return null;
     }
     if (!this.settings.workspaceId) {
-      new Notice('HangarX: Cloud workspace ID is empty. Open settings → connection details.');
+      new Notice('Cloud workspace ID is empty. Open settings → connection details.');
       return null;
     }
     // Spawn an isolated client + GraphPull pointed at cloud, with overrides
@@ -572,10 +578,10 @@ export default class CortexPlugin extends Plugin {
   private async runSyncCurrentNote(file: import('obsidian').TFile): Promise<void> {
     const s = this.settings;
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
+      new Notice('Workspace ID is empty. Open settings → connection.');
       return;
     }
-    const notice = new Notice(`HangarX: syncing ${file.basename}…`, 0);
+    const notice = new Notice(`Syncing ${file.basename}…`, 0);
     try {
       const result = await this.sync.syncOneFile(file);
       notice.hide();
@@ -599,16 +605,16 @@ export default class CortexPlugin extends Plugin {
   private async runFullSyncWithFeedback(): Promise<void> {
     const s = this.settings;
     if (!s.apiKey) {
-      new Notice('HangarX: API key is empty. Open settings → connection.');
+      new Notice('API key is empty. Open settings → connection.');
       return;
     }
     if (!s.workspaceId) {
-      new Notice('HangarX: Workspace ID is empty. Open settings → connection.');
+      new Notice('Workspace ID is empty. Open settings → connection.');
       return;
     }
     const fileCount = this.app.vault.getMarkdownFiles().length;
     if (fileCount === 0) {
-      new Notice('HangarX: vault has no Markdown files to sync.');
+      new Notice('Vault has no Markdown files to sync.');
       return;
     }
     const abort = new AbortController();
@@ -640,20 +646,22 @@ export default class CortexPlugin extends Plugin {
       // Server-state vs index-state divergence: surface when the local index
       // says everything is synced but the server graph is empty.
       if (synced === 0 && skipped > 0) {
+        let serverEmpty = false;
         try {
           const stats = await this.client.getGraphStats();
-          if (stats.totalEntities === 0) {
-            new Notice(
-              `⚠️ Index says ${skipped} files are already synced, but the server graph is empty. ` +
-              'Run "Force re-ingest entire vault" from the command palette to re-push everything.',
-              12000,
-            );
-          }
+          serverEmpty = stats.totalEntities === 0;
         } catch {
           /* stats fetch failed — don't compound */
         }
-      } else if (synced === 0 && skipped > 0 && deleted === 0) {
-        new Notice('Everything was already up to date.');
+        if (serverEmpty) {
+          new Notice(
+            `⚠️ Index says ${skipped} files are already synced, but the server graph is empty. ` +
+            'Run "Force re-ingest entire vault" from the command palette to re-push everything.',
+            12000,
+          );
+        } else if (deleted === 0) {
+          new Notice('Everything was already up to date.');
+        }
       }
     } catch (e) {
       progress.notice.hide();
@@ -729,7 +737,7 @@ export default class CortexPlugin extends Plugin {
    * success still tells the user what worked.
    */
   private async runRebuildCommunitiesAndReindex(): Promise<void> {
-    const progress = new Notice('HangarX: rebuilding communities + reindexing…', 0);
+    const progress = new Notice('Rebuilding communities + reindexing…', 0);
     let reindexOk = false;
     let detectOk = false;
     let detectStats: { communitiesCreated: number; levels: number } | null = null;
@@ -757,7 +765,7 @@ export default class CortexPlugin extends Plugin {
       parts.push(detectOk ? '✓ Communities detected' : '✗ Community detection failed');
       new Notice(`HangarX rebuild partial: ${parts.join(' · ')} (see console)`, 10000);
     } else {
-      new Notice('HangarX rebuild failed — see console for details.', 8000);
+      new Notice('Rebuild failed — see console for details.', 8000);
     }
   }
 }

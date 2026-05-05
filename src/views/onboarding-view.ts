@@ -37,7 +37,7 @@ export class OnboardingView extends ItemView {
   }
 
   getViewType(): string { return ONBOARDING_VIEW_TYPE; }
-  getDisplayText(): string { return 'HangarX: Get started'; }
+  getDisplayText(): string { return 'Get started'; }
   getIcon(): string { return 'rocket'; }
 
   async onOpen(): Promise<void> {
@@ -432,7 +432,7 @@ export class OnboardingView extends ItemView {
     });
 
     // Stop server option (advanced)
-    const stop = cfg.createEl('button', { cls: 'cortex-onboarding-mcp-stop', text: 'Stop MCP server' });
+    const stop = cfg.createEl('button', { cls: 'cortex-onboarding-mcp-stop', text: 'Stop local server' });
     stop.addEventListener('click', () => {
       void (async () => {
         await this.plugin.toggleMcpServer(false);
@@ -462,9 +462,9 @@ export class OnboardingView extends ItemView {
       void (async () => {
         try {
           await navigator.clipboard.writeText(opts.payload);
-          new Notice(`HangarX: ${opts.label} ${opts.kind === 'cmd' ? 'command' : 'config'} copied.`);
+          new Notice(`${opts.label} ${opts.kind === 'cmd' ? 'command' : 'config'} copied.`);
         } catch {
-          new Notice('HangarX: Copy failed — selecting text instead.');
+          new Notice('Copy failed — selecting text instead.');
         }
       })();
     });

@@ -33,36 +33,39 @@ export interface BridgeConfig {
   token: string;
 }
 
-/**
- * Lazy-load Node built-ins via Obsidian's Electron host. We read
- * `globalThis.require` at runtime so esbuild's static analysis can't
- * see the imports and try to bundle them. On mobile (web build) the
- * `require` global doesn't exist; callers below gate against this
- * via `isDesktop()`. Avoids `new Function(...)` which the obsidianmd
- * ESLint plugin blocks under `no-new-func`.
- *
- * The `any` return type is kept on purpose — the callers below treat
- * the result as a CJS `require` and `unknown` would force a cast at
- * every call site for no real type safety (we only ever pass it to
- * known module names whose typings are imported separately).
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above; mirrors Node's require signature
-const dynRequire: any =
-  typeof (globalThis as { require?: unknown }).require === 'function'
-    ? (globalThis as { require: unknown }).require
-    : null;
+// Lazy-load Node built-ins via Obsidian's Electron host. Read `require` off
+// the global at runtime so esbuild's static analysis can't see the imports
+// and try to bundle them. On mobile (no Node) callers gate via `isDesktop()`.
+type RequireFn = (m: string) => unknown;
+
+function getRequire(): RequireFn | null {
+  const g = globalThis as { require?: unknown };
+  return typeof g.require === 'function' ? (g.require as RequireFn) : null;
+}
+
 function nodeFs(): typeof import('fs/promises') {
-  return dynRequire('fs').promises;
+  const req = getRequire();
+  if (!req) throw new Error('Node fs unavailable on this platform');
+  return (req('fs') as typeof import('fs')).promises;
 }
+
 function nodePath(): typeof import('path') {
-  return dynRequire('path');
+  const req = getRequire();
+  if (!req) throw new Error('Node path unavailable on this platform');
+  return req('path') as typeof import('path');
 }
+
 function nodeOs(): typeof import('os') {
-  return dynRequire('os');
+  const req = getRequire();
+  if (!req) throw new Error('Node os unavailable on this platform');
+  return req('os') as typeof import('os');
 }
+
 function isDesktop(): boolean {
   try {
-    return !!dynRequire && !!nodeOs().homedir;
+    const req = getRequire();
+    if (!req) return false;
+    return !!(req('os') as typeof import('os')).homedir;
   } catch {
     return false;
   }
@@ -311,9 +314,10 @@ export async function disconnectMcpEntry(configPath: string): Promise<ConnectRes
 export function revealInFileManager(configPath: string): boolean {
   if (!isDesktop()) return false;
   try {
-    // electron is loaded via the same dynRequire shim — works inside the renderer.
-    const { shell } = dynRequire('electron');
-    shell.showItemInFolder(configPath);
+    const req = getRequire();
+    if (!req) return false;
+    const electron = req('electron') as { shell?: { showItemInFolder?(p: string): void } };
+    electron.shell?.showItemInFolder?.(configPath);
     return true;
   } catch {
     return false;

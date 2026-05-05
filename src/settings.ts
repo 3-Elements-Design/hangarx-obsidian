@@ -316,7 +316,7 @@ export const DEFAULT_SETTINGS: CortexSettings = {
   apiKey: '',
   workspaceId: '',
   vaultId: '',
-  excludePatterns: ['.cortex/', '.obsidian/', 'templates/'],
+  excludePatterns: ['.cortex/', 'templates/'],
   includeFolders: [],
   syncOnStartup: true,
   autoSyncDebounceMs: 2000,
@@ -417,11 +417,11 @@ export class CortexSettingTab extends PluginSettingTab {
     );
 
     new Setting(containerEl)
-      .setName('Where HangarX runs')
-      .setDesc('Cloud uses the hosted API. Local runs everything on your machine via Docker.')
+      .setName('Connection mode')
+      .setDesc('Cloud uses the hosted API. Local runs everything on your machine via docker.')
       .addDropdown(d => d
-        .addOption('cloud', '☁️  cloud (HangarX hosted)')
-        .addOption('local', '🏠  Local (docker)')
+        .addOption('cloud', 'Cloud (hosted)')
+        .addOption('local', 'Local (docker)')
         .setValue(mode)
         .onChange(async v => {
           s.connectionMode = v as ConnectionMode;
@@ -474,7 +474,7 @@ export class CortexSettingTab extends PluginSettingTab {
     this.renderAdvanced(containerEl, 'Sync — advanced', (host) => {
       new Setting(host)
         .setName('Exclude patterns')
-        .setDesc('Comma-separated path prefixes to skip when pushing to HangarX.')
+        .setDesc('Comma-separated path prefixes to skip when pushing.')
         .addText(t => t
           .setValue(this.plugin.settings.excludePatterns.join(','))
           .onChange(async v => {
@@ -573,7 +573,7 @@ export class CortexSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Default right pane')
-      .setDesc('Which sidebar auto-opens on startup. "ask your vault" is always-on chat over your knowledge graph; "Related notes" surfaces semantically similar notes for the current file.')
+      .setDesc('Which sidebar opens at startup — chat over your knowledge graph, or semantically similar notes for the current file.')
       .addDropdown(d => d
         .addOption('chat', 'Ask your vault')
         .addOption('related', 'Related notes')
@@ -602,10 +602,10 @@ export class CortexSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Chat mode')
-      .setDesc('RAG (default) is single-shot retrieval — fastest, simplest. Agent uses the server-side tool-calling harness: the LLM decides which tools to call (knowledge graph search, multi-hop paths, optionally web search), iterates, and synthesizes — slower but much better on multi-step questions.')
+      .setDesc('Single-shot retrieval (default) is fastest and simplest. The agent mode uses the server-side tool-calling harness — the model decides which tools to call (knowledge graph search, multi-hop paths, optionally web search), iterates, and synthesizes — slower but much better on multi-step questions.')
       .addDropdown(d => d
-        .addOption('rag', 'RAG (single-shot, default)')
-        .addOption('agent', 'Agent (tool-calling, beta)')
+        .addOption('rag', 'Single-shot retrieval (default)')
+        .addOption('agent', 'Tool-calling agent (beta)')
         .setValue(this.plugin.settings.chatAgentMode)
         .onChange(async v => {
           this.plugin.settings.chatAgentMode = v as 'rag' | 'agent';
@@ -695,7 +695,7 @@ export class CortexSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Onboarding')
-      .setDesc('Open the persistent Get-started panel — connect, sync, run a query, connect external agents.')
+      .setDesc('Open the persistent get-started panel — connect, sync, run a query, connect external agents.')
       .addButton(b => b
         .setButtonText('Open onboarding panel')
         .onClick(async () => {
@@ -1350,9 +1350,9 @@ export class CortexSettingTab extends PluginSettingTab {
       const revealBtn = actions.createEl('button', { text: 'Reveal docker-compose.cortex.yml' });
       revealBtn.addEventListener('click', () => {
         if (fullYmlPath) {
-          const showInFolder = (this.plugin.app as unknown as { showInFolder?(p: string): void }).showInFolder;
-          if (typeof showInFolder === 'function') {
-            showInFolder.call(this.plugin.app, fullYmlPath);
+          const appWithReveal = this.plugin.app as unknown as { showInFolder?(p: string): void };
+          if (typeof appWithReveal.showInFolder === 'function') {
+            appWithReveal.showInFolder(fullYmlPath);
           } else {
             new Notice(`docker-compose.cortex.yml lives at: ${fullYmlPath}`);
           }
@@ -1510,7 +1510,12 @@ export class CortexSettingTab extends PluginSettingTab {
             // `docker compose logs` exits 0 even when there are no containers,
             // so treat any captured stdout/stderr as the body. Only fail on
             // ENOENT (docker not installed) or hard timeouts.
-            if (err && !out && !errOut) return reject(err);
+            if (err && !out && !errOut) {
+              const reason = err instanceof Error
+                ? err
+                : new Error(typeof err === 'string' ? err : 'docker compose logs failed');
+              return reject(reason);
+            }
             resolve((out) + (errOut ? `\n--- stderr ---\n${errOut}` : ''));
           },
         );
@@ -1862,7 +1867,7 @@ export class CortexSettingTab extends PluginSettingTab {
     // Folded into Chat & Agents under the new IA — render as a sub-heading
     // (h4) rather than a top-level h3 so it nests visually under that
     // section's header rather than reading as a peer section.
-    new Setting(parent).setName("Runtime LLM (advanced)").setHeading();
+    new Setting(parent).setName("Runtime model (advanced)").setHeading();
     parent.createEl('p', {
       cls: 'setting-item-description',
       text:
@@ -1874,7 +1879,7 @@ export class CortexSettingTab extends PluginSettingTab {
     // there." The link scrolls to the keys section's anchor + opens it.
     const xref = parent.createEl('p', { cls: 'cortex-llm-runtime-xref setting-item-description' });
     xref.appendText('Switching to a provider requires a key configured in ');
-    const link = xref.createEl('a', { text: 'LLM provider keys', href: '#' });
+    const link = xref.createEl('a', { text: 'Provider keys', href: '#' });
     link.addEventListener('click', evt => {
       evt.preventDefault();
       const target = parent.querySelector<HTMLElement>('[data-cortex-keys-anchor]')
@@ -1961,7 +1966,7 @@ export class CortexSettingTab extends PluginSettingTab {
 
     const providerSetting = new Setting(wrap)
       .setName('Chat provider')
-      .setDesc('Which LLM provider runs chat completions. Greyed-out providers need a key configured first.')
+      .setDesc('Which provider runs chat completions. Greyed-out providers need a key configured first.')
       .addDropdown(d => {
         const s = this.plugin.settings;
         for (const id of ['openai', 'anthropic', 'gemini', 'grok', 'moonshot', 'huggingface', 'ollama', 'openrouter']) {
@@ -2004,7 +2009,7 @@ export class CortexSettingTab extends PluginSettingTab {
       .setName('API key')
       .setDesc('Optional. Leave blank to keep the existing key. Required only when switching providers or rotating.')
       .addText(t => {
-        apiKeyInput = t as unknown as TextLike;
+        apiKeyInput = t;
         t.inputEl.type = 'password';
         t.setPlaceholder('Sk-… / aiza… / etc.');
       });
@@ -2915,7 +2920,7 @@ export class CortexSettingTab extends PluginSettingTab {
           INVALID_API_KEY: 'This key is invalid or expired — generate a fresh one in the dashboard.',
           UNAUTHORIZED: 'Server didn\'t recognise the auth header — make sure you copied the whole key.',
           AUTH_LOCKOUT: 'Too many failed attempts from this IP. Wait a few minutes and try again.',
-          WORKSPACE_NOT_ALLOWED: `This key isn\'t authorised for the workspace ID below. Pick a different workspace, or generate a new key without workspace scoping.`,
+          WORKSPACE_NOT_ALLOWED: "This key isn't authorised for the workspace ID below. Pick a different workspace, or generate a new key without workspace scoping.",
           FORBIDDEN: detail.message || 'Key is missing the required permissions.',
         };
         const headline = (detail.code && headlineByCode[detail.code]) || `Server rejected the key (${status}).`;

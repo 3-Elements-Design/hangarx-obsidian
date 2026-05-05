@@ -1013,6 +1013,11 @@ export class CortexClient {
     };
     const streamWsId = effectiveWorkspaceId(this.settings);
     if (streamWsId) headers['x-workspace-id'] = streamWsId;
+    // SSE streaming requires native fetch's ReadableStream body. Obsidian's
+    // requestUrl returns a buffered RequestUrlResponse with no streaming
+    // accessor, so it can't deliver server-sent events incrementally — we
+    // fall back to native fetch only on this single endpoint.
+    // eslint-disable-next-line no-restricted-globals -- see comment above; SSE incompatible with Obsidian.requestUrl
     const response = await fetch(url, {
       method: 'POST',
       headers,

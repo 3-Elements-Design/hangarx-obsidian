@@ -27,7 +27,7 @@ export class GraphStatsModal extends Modal {
   }
 
   async onOpen(): Promise<void> {
-    this.titleEl.setText('HangarX: Knowledge graph stats');
+    this.titleEl.setText('Knowledge graph stats');
     this.contentEl.empty();
     this.contentEl.addClass('cortex-graph-stats');
 
@@ -648,16 +648,6 @@ function computeInsights(stats: GraphStats, ragStats: GraphRAGStats | null): Ins
   return out;
 }
 
-/** Walk a nested object via a path, returning undefined for any miss. */
-function readNested(obj: unknown, path: string[]): unknown {
-  let cur: unknown = obj;
-  for (const key of path) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[key];
-  }
-  return cur;
-}
-
 /** Flatten one level of objects so we can split keys into bool/number/string
  *  buckets. Top-level objects (Evaluator Config, Orchestrator Config) get
  *  inlined; deeper nesting is preserved as a JSON-stringified summary. */
@@ -687,10 +677,6 @@ const SYSTEM_PROPS = new Set([
 
 function isSystemProperty(name: string): boolean {
   return SYSTEM_PROPS.has(name) || name.startsWith('_');
-}
-
-function stripPrefix(s: string, prefix: string): string {
-  return s.startsWith(prefix) ? s.slice(prefix.length) : s;
 }
 
 function formatNumber(n: number): string {

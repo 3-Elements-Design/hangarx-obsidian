@@ -32,7 +32,7 @@ export class ChatView extends ItemView {
   }
 
   getViewType(): string { return CHAT_VIEW_TYPE; }
-  getDisplayText(): string { return 'HangarX: Ask your vault'; }
+  getDisplayText(): string { return 'Ask your vault'; }
   getIcon(): string { return 'message-circle'; }
 
   // Obsidian's View.onOpen / onClose accept either sync or Promise

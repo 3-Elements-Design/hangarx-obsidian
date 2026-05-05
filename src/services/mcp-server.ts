@@ -252,7 +252,7 @@ export class McpServer {
               },
             };
           }
-          console.log('[Cortex MCP] tools/call', name, 'workspaceId=', this.settings.workspaceId.slice(0, 8) + '…', 'apiKey=', this.settings.apiKey ? 'present' : 'none');
+          console.debug('[Cortex MCP] tools/call', name, 'workspaceId=', this.settings.workspaceId.slice(0, 8) + '…', 'apiKey=', this.settings.apiKey ? 'present' : 'none');
           const callArgs = (args && typeof args === 'object' && !Array.isArray(args)
             ? args
             : {}) as Record<string, unknown>;
