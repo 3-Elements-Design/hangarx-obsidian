@@ -213,20 +213,20 @@ Grab \`main.js\`, \`manifest.json\`, \`styles.css\` from the [latest release](ht
 
 Best for trying HangarX out. Sign-in is OAuth, no key copy-paste.
 
-1. Settings \u2192 **HangarX \u2192 Connection** \u2192 Mode: **\u2601\uFE0F Cloud (HangarX hosted)**
+1. Settings \u2192 **HangarX \u2192 Connection** \u2192 Mode: **Cloud (hosted)**
 2. **Sign in with HangarX** \u2192 approve in browser \u2192 API key + workspace auto-fill
-3. Command palette (\u2318P / Ctrl-P) \u2192 **HangarX: Sync**
+3. Command palette (\u2318P / Ctrl-P) \u2192 **Sync**
 4. Open the **Ask your vault** chat in the right sidebar and ask anything
 
 ### Local \u2014 fully private
 
 Everything runs in Docker on your machine. Notes never leave the laptop.
 
-1. Settings \u2192 **HangarX \u2192 Connection** \u2192 Mode: **\u{1F3E0} Local (Docker)**
+1. Settings \u2192 **HangarX \u2192 Connection** \u2192 Mode: **Local (docker)**
 2. Click **Save Compose to vault** \u2014 writes \`docker-compose.cortex.yml\` next to your notes
 3. In a terminal: \`docker compose -f docker-compose.cortex.yml up -d\`
 4. Add at least one LLM key in **LLM provider keys** (Gemini, OpenAI, Anthropic, Kimi, HuggingFace, OpenRouter, xAI, or Ollama for fully offline)
-5. Run **HangarX: Sync** from the command palette
+5. Run **Sync** from the command palette
 
 > Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/). Images are pulled from Docker Hub (\`hangarx/cortex-api\`) \u2014 no source code or Node.js needed.
 
@@ -380,7 +380,7 @@ Right-sidebar chat. Multi-hop retrieval with citations. Click an entity chip to 
 
 ### Sync modal
 
-\`HangarX: Sync\` \u2014 one place, five actions:
+\`Sync\` (in the command palette) \u2014 one place, five actions:
 
 | Action | What it does |
 |---|---|
@@ -403,13 +403,13 @@ Type and HangarX shows ghost-text \`[[wikilink]]\` autocompletes from your graph
 Pick any in **Settings \u2192 HangarX \u2192 LLM provider keys** (BYOK) or in the per-request **LLM (runtime)** panel. Switch on the fly \u2014 no container restart.
 
 - \u{1F7E6} **Google Gemini** \u2014 fast, cheap default
-- \u{1F7E9} **OpenAI** \u2014 GPT-4o, GPT-4.1, o-series
-- \u{1F7E7} **Anthropic Claude**
+- \u{1F7E9} **OpenAI** \u2014 GPT-5.x, o-series
+- \u{1F7E7} **Anthropic Claude** \u2014 Sonnet 4.x, Opus 4.x
 - \u2B1B **xAI Grok**
 - \u{1F7E8} **Moonshot Kimi K2.5** \u2014 direct
 - \u{1F7EA} **HuggingFace Inference** \u2014 auto-routes Kimi K2.5, Llama 3.3 70B, Qwen 2.5 72B
 - \u{1F310} **OpenRouter** \u2014 200+ models behind one key
-- \u{1F4BB} **Ollama** \u2014 fully local (gemma4, llama3.3, qwen2.5, mistral, phi3, \u2026)
+- \u{1F4BB} **Ollama** \u2014 fully local (gemma3, llama3.3, qwen2.5, mistral, phi4, \u2026)
 
 ---
 
@@ -422,25 +422,28 @@ Pick any in **Settings \u2192 HangarX \u2192 LLM provider keys** (BYOK) or in th
 | Trained on your data | \u2717 | \u2717 |
 | Revocable | \u2713 ([dashboard](https://app.hangarx.ai/settings?tab=api-keys)) | \u2713 (delete the container) |
 
-**Excluded by default**: \`.cortex/\`, \`.obsidian/\`, \`templates/\`. Configurable in **What to sync**.
+**Excluded by default**: \`.cortex/\`, \`templates/\`, plus your vault's config folder (whatever \`Vault#configDir\` resolves to \u2014 usually \`.obsidian/\`). Configurable in **What to sync**.
 **Attachments**: images, PDFs, and other binaries are ingested by default. Toggle off in **Sync attachments**.
 
 ---
 
 ## Commands
 
+All commands appear in the palette under the **HangarX** plugin namespace.
+
 | Command | Description |
 |---|---|
-| \`HangarX: Ask your vault\` | Open the Q&A chat |
-| \`HangarX: Sync\` | Open the multi-purpose sync modal |
-| \`HangarX: Sync current note\` | Push only the active file |
-| \`HangarX: Diff vault vs knowledge graph\` | Open the 4-bucket diff view |
-| \`HangarX: Pull graph entities into vault\` | Materialize entities as markdown |
-| \`HangarX: Force re-ingest entire vault\` | Re-sync everything |
-| \`HangarX: Connect agents (Claude, Cursor)\u2026\` | Jump to the Agents settings panel |
-| \`HangarX: Knowledge graph stats\` | Show graph + memory counts |
-| \`HangarX: Ingest URL into knowledge graph\` | Scrape a URL and add it to the graph |
-| \`HangarX: Show onboarding\` | Reopen the first-run walkthrough |
+| \`Ask your vault\` | Open the Q&A chat |
+| \`Sync (open modal)\` | Open the multi-purpose sync modal |
+| \`Sync current note to knowledge graph\` | Push only the active file |
+| \`Diff vault \u2194 graph (what's out of sync)\` | Open the 4-bucket diff view |
+| \`Pull knowledge graph into vault\` | Materialize entities as markdown |
+| \`Force re-ingest entire vault (after server reset)\` | Re-sync everything |
+| \`Rebuild communities + reindex (after fast re-ingest)\` | Post-ingest community detection + embedding backfill |
+| \`Connect agents\u2026\` | Jump to the Agents settings panel |
+| \`Knowledge graph stats\` | Show graph + memory counts |
+| \`Ingest URL into knowledge graph\` | Scrape a URL and add it to the graph |
+| \`Show onboarding panel\` | Reopen the first-run walkthrough |
 
 ---
 
@@ -477,7 +480,7 @@ Make sure Docker Desktop is running and \`docker compose ps\` shows \`cortex-api
 <details>
 <summary><strong>Local stack: embedding dimension mismatch</strong></summary>
 
-You changed embedding providers and existing chunks were embedded with a different model. Run **HangarX: Force re-ingest entire vault**, or wipe the local Postgres volume.
+You changed embedding providers and existing chunks were embedded with a different model. Run **Force re-ingest entire vault** from the command palette, or wipe the local Postgres volume.
 
 </details>
 
