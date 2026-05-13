@@ -40,7 +40,7 @@ export class StartersModal extends Modal {
       this.query = input.value.trim().toLowerCase();
       this.renderList();
     });
-    activeWindow.setTimeout(() => input.focus(), 50);
+    window.setTimeout(() => input.focus(), 50);
 
     this.listEl = this.contentEl.createDiv({ cls: 'cortex-starters-list' });
     this.renderList();

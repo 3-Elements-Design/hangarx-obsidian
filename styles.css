@@ -676,12 +676,10 @@
 /* Links — already get an underline by default; adjust for in-chat density. */
 .cortex-chat-answer a {
   color: var(--interactive-accent);
-  text-decoration: underline;
-  text-decoration-color: rgba(127, 127, 127, 0.35);
-  text-underline-offset: 2px;
+  text-decoration: underline rgba(127, 127, 127, 0.35);
 }
 .cortex-chat-answer a:hover {
-  text-decoration-color: var(--interactive-accent);
+  text-decoration: underline var(--interactive-accent);
 }
 
 /* Images — keep them constrained to the chat width and rounded for polish. */
@@ -1432,7 +1430,6 @@
       "shimmer" feel as a skeleton loader. The sheen rides on a
       background-clip:text gradient so it works on any theme. */
 .cortex-chat-thinking {
-  color: var(--text-muted);
   font-style: italic;
   display: inline-flex;
   align-items: center;
@@ -1450,6 +1447,7 @@
   color: transparent;
   -webkit-text-fill-color: transparent;
   animation: cortex-thinking-sheen 2.4s linear infinite;
+  transition: opacity 140ms ease, transform 140ms ease;
 }
 @keyframes cortex-thinking-sheen {
   0%   { background-position: 200% 0; }
@@ -1479,7 +1477,6 @@
 /* Brief fade when the phase label switches — applied via JS by toggling
    .is-changing for ~120ms around setText(). */
 .cortex-chat-thinking.is-changing { opacity: 0.35; transform: translateY(1px); }
-.cortex-chat-thinking { transition: opacity 140ms ease, transform 140ms ease; }
 
 /* Thinking-pill row: just the phase label. Wrapper kept so the cleanup
    code (which removes the row, not the pill) stays unchanged across
@@ -2129,8 +2126,11 @@ details.cortex-provider-row[open] > summary.cortex-provider-row-summary::before 
 .cortex-provider-row-label + .cortex-provider-row-active-chip {
   margin-right: auto;
 }
-/* Fallback when the chip isn't present: label itself flex-grows. */
-.cortex-provider-row-label:not(:has(+ .cortex-provider-row-active-chip)) {
+/* Fallback when the chip isn't present: label itself flex-grows. The
+   `.is-active-chip` marker is added on the row by the chip-insertion JS,
+   so default is no-chip → flex-grow, and presence of the chip toggles
+   the override at line 2128 above. */
+.cortex-provider-row:not(.is-active-chip) .cortex-provider-row-label {
   flex: 1 1 auto;
 }
 /* "active for chat" chip — appears on the keys-section row whose provider
@@ -2206,25 +2206,6 @@ details.cortex-provider-row[open] > summary.cortex-provider-row-summary::before 
    Graph Diff Modal
    ────────────────────────────────────────── */
 .cortex-diff-modal { max-width: 580px; }
-.cortex-diff-container { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
-.cortex-diff-summary {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.cortex-diff-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-}
-.cortex-diff-badge-icon .svg-icon { width: 12px; height: 12px; }
-.cortex-diff-badge-added { background: rgba(0, 200, 83, 0.12); color: #00c853; }
-.cortex-diff-badge-modified { background: rgba(255, 171, 0, 0.12); color: #ffab00; }
-.cortex-diff-badge-removed { background: rgba(255, 82, 82, 0.12); color: #ff5252; }
 
 .cortex-diff-section { display: flex; flex-direction: column; gap: 4px; }
 .cortex-diff-section-title {
@@ -2493,7 +2474,7 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
 }
 
 /* ── Graph stats modal ─────────────────────────────────────────── */
-.modal:has(.cortex-graph-stats) {
+.modal.cortex-graph-stats-modal {
   width: min(960px, 94vw) !important;
   max-width: min(960px, 94vw) !important;
 }
@@ -2554,8 +2535,7 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
 .cortex-graph-stats-dl {
   display: grid;
   grid-template-columns: max-content 1fr;
-  column-gap: 16px;
-  row-gap: 4px;
+  gap: 4px 16px;
   margin: 0;
 }
 .cortex-graph-stats-dl dt {
@@ -2856,8 +2836,7 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
 }
 .cortex-graph-stats-chip.is-off {
   color: var(--text-faint);
-  text-decoration: line-through;
-  text-decoration-color: var(--text-faint);
+  text-decoration: line-through var(--text-faint);
 }
 .cortex-graph-stats-chip-mark {
   font-size: 10px;
@@ -3344,177 +3323,6 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   line-height: 1.45;
 }
 
-/* ──────────────────────────────────────────
-   Cloud graph pull modal
-   ────────────────────────────────────────── */
-.modal.cortex-pull-modal,
-.cortex-pull-modal {
-  width: min(480px, 90vw) !important;
-  max-width: min(480px, 90vw) !important;
-}
-.cortex-pull-modal .modal-content {
-  padding: 16px 20px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-/* Phase row */
-.cortex-pull-phase-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.cortex-pull-phase-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  flex-shrink: 0;
-}
-.cortex-pull-phase-icon .svg-icon { width: 18px; height: 18px; }
-.cortex-pull-phase-label {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-/* Message */
-.cortex-pull-message {
-  font-size: 13px;
-  color: var(--text-muted);
-  min-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Progress bar */
-.cortex-pull-bar-wrap {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--background-modifier-border);
-  overflow: hidden;
-}
-.cortex-pull-bar-fill {
-  height: 100%;
-  width: 0;
-  border-radius: 3px;
-  background: var(--interactive-accent);
-  transition: width 300ms ease;
-}
-.cortex-pull-bar-fill.cortex-pull-bar-done {
-  background: var(--color-green, #34d058);
-}
-.cortex-pull-bar-fill.cortex-pull-bar-error {
-  background: var(--text-error, #e53e3e);
-}
-.cortex-pull-bar-fill.cortex-pull-bar-indeterminate {
-  width: 40% !important;
-  animation: cortex-pull-slide 1.4s ease-in-out infinite;
-}
-@keyframes cortex-pull-slide {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
-
-/* Stats grid */
-.cortex-pull-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.cortex-pull-stat-header {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.cortex-pull-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-.cortex-pull-stat {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  font-size: 13px;
-  color: var(--text-normal);
-}
-.cortex-pull-stat-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  flex-shrink: 0;
-}
-.cortex-pull-stat-icon .svg-icon { width: 14px; height: 14px; }
-.cortex-pull-stat-create .cortex-pull-stat-icon { color: var(--color-green, #34d058); }
-.cortex-pull-stat-update .cortex-pull-stat-icon { color: var(--interactive-accent); }
-.cortex-pull-stat-delete .cortex-pull-stat-icon { color: var(--text-error, #e53e3e); }
-.cortex-pull-stat-enriched .cortex-pull-stat-icon { color: var(--color-yellow, #f0ad4e); }
-.cortex-pull-stat-total .cortex-pull-stat-icon { color: var(--text-muted); }
-
-/* Stat details (preview expandable lists) */
-.cortex-pull-stat-details {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 12px;
-}
-.cortex-pull-stat-details > summary {
-  font-weight: 600;
-  cursor: pointer;
-  user-select: none;
-  color: var(--text-normal);
-}
-.cortex-pull-stat-details ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: var(--text-muted);
-}
-.cortex-pull-stat-details li { margin: 2px 0; }
-.cortex-pull-more { font-style: italic; color: var(--text-faint); }
-
-.cortex-pull-errors > summary { color: var(--text-error); }
-
-/* Button row */
-.cortex-pull-btn-row {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
-}
-.cortex-pull-cancel {
-  padding: 6px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  color: var(--text-normal);
-  cursor: pointer;
-  transition: background 80ms ease;
-}
-.cortex-pull-cancel:hover { background: var(--background-modifier-hover); }
-
-.cortex-pull-error-msg {
-  color: var(--text-error);
-  background: var(--background-modifier-error);
-  padding: 8px 10px;
-  border-radius: 6px;
-}
 
 /* ──────────────────────────────────────────
    Sync modal — picker, stat tiles, action cards

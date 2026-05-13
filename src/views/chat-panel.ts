@@ -513,7 +513,7 @@ export class ChatPanel {
     const listEl = popover.createDiv({ cls: 'cortex-chat-history-list' });
     listEl.createDiv({ cls: 'cortex-chat-history-empty', text: 'Loading…' });
 
-    activeWindow.setTimeout(() => {
+    window.setTimeout(() => {
       activeDocument.addEventListener('mousedown', this.onOutsideClick, true);
     }, 0);
 
@@ -540,7 +540,7 @@ export class ChatPanel {
       };
       render('');
       searchInput.addEventListener('input', () => render(searchInput.value));
-      activeWindow.setTimeout(() => searchInput.focus(), 80);
+      window.setTimeout(() => searchInput.focus(), 80);
     } catch (e) {
       listEl.empty();
       listEl.createDiv({ cls: 'cortex-chat-history-empty', text: `Error: ${(e as Error).message}` });
@@ -1802,7 +1802,7 @@ export class ChatPanel {
       const payload = `${fmt.headline}\n\n${fmt.detail}${fmt.hint ? `\n\nHint: ${fmt.hint}` : ''}`;
       await navigator.clipboard.writeText(payload);
       copyBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyBtn.setText('Copy details'), 1400);
+      window.setTimeout(() => copyBtn.setText('Copy details'), 1400);
     })(); });
   }
 
@@ -1918,7 +1918,7 @@ export class ChatPanel {
   }
 
   private scrollToBottom(): void {
-    requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
       this.outputEl.scrollTop = this.outputEl.scrollHeight;
     });
   }
@@ -1981,7 +1981,7 @@ export class ChatPanel {
       copyBtn.empty();
       setIcon(copyBtn, 'check');
       copyBtn.createSpan({ text: 'Copied' });
-      activeWindow.setTimeout(() => {
+      window.setTimeout(() => {
         copyBtn.empty();
         setIcon(copyBtn, 'copy');
         copyBtn.createSpan({ text: 'Copy' });
@@ -2009,7 +2009,7 @@ export class ChatPanel {
         setIcon(saveBtn, 'check');
         saveBtn.createSpan({ text: 'Saved' });
         new Notice(`Saved to ${path}`);
-        activeWindow.setTimeout(() => {
+        window.setTimeout(() => {
           saveBtn.empty();
           setIcon(saveBtn, 'file-plus');
           saveBtn.createSpan({ text: 'Save to Note' });
@@ -2207,7 +2207,7 @@ export class ChatPanel {
    * Returns true if at least one path took effect.
    */
   private async applyGraphFilter(leaf: unknown, query: string): Promise<boolean> {
-    const sleep = (ms: number) => new Promise(r => activeWindow.setTimeout(r, ms));
+    const sleep = (ms: number) => new Promise(r => window.setTimeout(r, ms));
     const waitFor = async <T>(fn: () => T | null | undefined, ms = 2000): Promise<T | null> => {
       const start = Date.now();
       while (Date.now() - start < ms) {

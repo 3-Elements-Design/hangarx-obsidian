@@ -128,7 +128,7 @@ export class GraphPullModal extends Modal {
     this.showResult(result);
 
     // Auto-close after 4 seconds
-    activeWindow.setTimeout(() => {
+    window.setTimeout(() => {
       if (!this.cancelled) this.close();
     }, 4000);
   }
@@ -273,7 +273,7 @@ export class GraphPullModal extends Modal {
       const payload = `${fmt.headline}\n\n${fmt.detail}${fmt.hint ? `\n\nHint: ${fmt.hint}` : ''}`;
       await navigator.clipboard.writeText(payload);
       copyBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyBtn.setText('Copy details'), 1400);
+      window.setTimeout(() => copyBtn.setText('Copy details'), 1400);
     })(); });
 
     // The pre-existing Cancel button below now reads "Close".

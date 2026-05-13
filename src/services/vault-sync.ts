@@ -56,7 +56,7 @@ const MIME_BY_EXT: Record<string, string> = {
 
 export class VaultSync {
   private index: SyncIndex = emptyIndex();
-  // `activeWindow.setTimeout` returns DOM-typed `number` (not Node's
+  // `window.setTimeout` returns DOM-typed `number` (not Node's
    // `Timeout`), so the map values must be number to satisfy strict mode.
   private debounceTimers = new Map<string, number>();
   private indexLoaded = false;
@@ -335,12 +335,12 @@ export class VaultSync {
     if (this.isExcluded(file.path)) return;
 
     const existing = this.debounceTimers.get(file.path);
-    if (existing) activeWindow.clearTimeout(existing);
+    if (existing) window.clearTimeout(existing);
 
     // Wrap async work in a void IIFE so the setTimeout callback itself
     // returns void — the obsidianmd ESLint plugin flags Promise-returning
     // callbacks passed where void is expected.
-    const timer = activeWindow.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       this.debounceTimers.delete(file.path);
       void (async () => {
         try {

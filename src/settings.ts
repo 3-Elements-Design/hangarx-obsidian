@@ -1117,7 +1117,7 @@ export class CortexSettingTab extends PluginSettingTab {
         const path = 'docker-compose.cortex.yml';
         await this.plugin.app.vault.adapter.write(path, buildDockerComposeWithKeys(s));
         saveBtn.setText('✓ saved');
-        activeWindow.setTimeout(() => saveBtn.setText('Save to vault'), 2000);
+        window.setTimeout(() => saveBtn.setText('Save to vault'), 2000);
       } catch (e) {
         saveBtn.setText('Failed — check console');
         console.error('[Cortex] Failed to write compose file:', e);
@@ -1127,7 +1127,7 @@ export class CortexSettingTab extends PluginSettingTab {
     copyYamlBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(buildDockerComposeWithKeys(s));
       copyYamlBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyYamlBtn.setText('Copy YAML'), 1400);
+      window.setTimeout(() => copyYamlBtn.setText('Copy YAML'), 1400);
     })(); });
 
     // 3. Run docker compose.
@@ -1141,7 +1141,7 @@ export class CortexSettingTab extends PluginSettingTab {
       await navigator.clipboard.writeText(DOCKER_START_CMD);
       copyCmdBtn.textContent = 'Copied';
       copyCmdBtn.addClass('is-copied');
-      activeWindow.setTimeout(() => {
+      window.setTimeout(() => {
         copyCmdBtn.textContent = 'Copy';
         copyCmdBtn.removeClass('is-copied');
       }, 1400);
@@ -1424,7 +1424,7 @@ export class CortexSettingTab extends PluginSettingTab {
         // No "success" event from spawn — assume the OS handler took it.
         // If the binary doesn't exist, the 'error' handler fires within
         // ~50ms; otherwise the launcher is in flight.
-        activeWindow.setTimeout(() => resolve(true), 200);
+        window.setTimeout(() => resolve(true), 200);
       } catch {
         resolve(false);
       }
@@ -1619,7 +1619,7 @@ export class CortexSettingTab extends PluginSettingTab {
     copyBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(command);
       copyBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyBtn.setText('Copy'), 1400);
+      window.setTimeout(() => copyBtn.setText('Copy'), 1400);
     })(); });
   }
 
@@ -1660,11 +1660,11 @@ export class CortexSettingTab extends PluginSettingTab {
               `Saved ${path}. If the stack is already running, apply with: docker compose -f ${path} up -d --force-recreate`,
               8000,
             );
-            activeWindow.setTimeout(() => b.setButtonText('Save to vault'), 2000);
+            window.setTimeout(() => { b.setButtonText('Save to vault'); }, 2000);
           } catch (e) {
             b.setButtonText('Failed');
             console.error('[Cortex] Failed to write compose file:', e);
-            activeWindow.setTimeout(() => b.setButtonText('Save to vault'), 2000);
+            window.setTimeout(() => { b.setButtonText('Save to vault'); }, 2000);
           }
         }))
       .addButton(b => b
@@ -1672,7 +1672,7 @@ export class CortexSettingTab extends PluginSettingTab {
         .onClick(async () => {
           await navigator.clipboard.writeText(buildDockerComposeWithKeys(s));
           b.setButtonText('Copied');
-          activeWindow.setTimeout(() => b.setButtonText('Copy YAML'), 1400);
+          window.setTimeout(() => { b.setButtonText('Copy YAML'); }, 1400);
         }));
 
     // API URL — has a working default. Tag with a `[default]` pill so
@@ -2288,7 +2288,7 @@ export class CortexSettingTab extends PluginSettingTab {
         const original = copyBtn.textContent;
         copyBtn.textContent = 'Copied';
         copyBtn.addClass('is-copied');
-        activeWindow.setTimeout(() => {
+        window.setTimeout(() => {
           copyBtn.textContent = original;
           copyBtn.removeClass('is-copied');
         }, 1400);
@@ -2525,7 +2525,7 @@ export class CortexSettingTab extends PluginSettingTab {
       await navigator.clipboard.writeText(snippet);
       copyBtn.setText('Copied');
       copyBtn.addClass('is-copied');
-      activeWindow.setTimeout(() => { copyBtn.setText('Copy'); copyBtn.removeClass('is-copied'); }, 1400);
+      window.setTimeout(() => { copyBtn.setText('Copy'); copyBtn.removeClass('is-copied'); }, 1400);
     })(); });
     codeWrap.createEl('pre').createEl('code', { text: snippet });
   }
@@ -2573,7 +2573,7 @@ export class CortexSettingTab extends PluginSettingTab {
       if (workspaceId) lines.push(`x-workspace-id: ${workspaceId}`);
       await navigator.clipboard.writeText(lines.join('\n'));
       copyAllBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyAllBtn.setText('Copy URL + key'), 1400);
+      window.setTimeout(() => copyAllBtn.setText('Copy URL + key'), 1400);
     })(); });
 
     // Per-client rows (Claude.ai web, ChatGPT desktop, Other). Each opens
@@ -2618,7 +2618,7 @@ export class CortexSettingTab extends PluginSettingTab {
         await navigator.clipboard.writeText(lines.join('\n'));
         if (c.openUrl) window.open(c.openUrl, '_blank');
         setupBtn.setText('Copied');
-        activeWindow.setTimeout(() => setupBtn.setText(c.openUrl ? 'Open & copy' : 'Copy creds'), 1400);
+        window.setTimeout(() => setupBtn.setText(c.openUrl ? 'Open & copy' : 'Copy creds'), 1400);
       })(); });
 
       const moreBtn = actions.createEl('button', {
@@ -2756,6 +2756,10 @@ export class CortexSettingTab extends PluginSettingTab {
       const label = summary.querySelector<HTMLElement>('.cortex-provider-row-label');
       if (label) label.insertAdjacentElement('afterend', chip);
       else summary.appendChild(chip);
+      // Marker on the row so the label's flex behavior switches without
+      // a :has() selector (Obsidian review bot flags :has() for selector-
+      // invalidation cost).
+      targetRow.addClass('is-active-chip');
     }).catch(() => { /* runtime config unavailable — chip stays absent. */ });
   }
 
@@ -2831,11 +2835,11 @@ export class CortexSettingTab extends PluginSettingTab {
         try {
           const ok = await this.testProviderKey(p.id, key);
           b.setButtonText(ok ? '✓ Valid' : '✗ Invalid');
-          activeWindow.setTimeout(() => b.setButtonText('Test'), 2200);
+          window.setTimeout(() => { b.setButtonText('Test'); }, 2200);
         } catch (e) {
           b.setButtonText('✗ error');
           new Notice(`Test failed: ${(e as Error).message}`);
-          activeWindow.setTimeout(() => b.setButtonText('Test'), 2800);
+          window.setTimeout(() => { b.setButtonText('Test'); }, 2800);
         } finally {
           b.setDisabled(false);
         }
@@ -3129,7 +3133,7 @@ export class CortexSettingTab extends PluginSettingTab {
       const res = await Promise.race([
         requestUrl({ url, method: 'GET', throw: false }),
         new Promise<never>((_, reject) =>
-          activeWindow.setTimeout(() => reject(new Error('timeout after 5s')), 5000),
+          window.setTimeout(() => reject(new Error('timeout after 5s')), 5000),
         ),
       ]);
       let body: unknown = null;

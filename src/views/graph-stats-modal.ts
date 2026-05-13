@@ -30,6 +30,10 @@ export class GraphStatsModal extends Modal {
     this.titleEl.setText('Knowledge graph stats');
     this.contentEl.empty();
     this.contentEl.addClass('cortex-graph-stats');
+    // Marker on the modal wrapper so we can size it from CSS without
+    // resorting to :has(), which the Obsidian review bot flags for
+    // selector-invalidation cost.
+    this.modalEl.addClass('cortex-graph-stats-modal');
 
     // Mode pill goes above the loading state so the user can see *what they're
     // talking to* even while the stats are still in flight.
@@ -464,7 +468,7 @@ export class GraphStatsModal extends Modal {
       const md = renderAsMarkdown(stats, ragStats);
       await navigator.clipboard.writeText(md);
       copyBtn.setText('Copied');
-      activeWindow.setTimeout(() => copyBtn.setText('Copy as Markdown'), 1400);
+      window.setTimeout(() => copyBtn.setText('Copy as Markdown'), 1400);
     })(); });
     const noteBtn = footer.createEl('button', { text: 'Save as note', cls: 'mod-cta' });
     noteBtn.addEventListener('click', () => { void (async () => {

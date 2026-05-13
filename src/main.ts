@@ -101,7 +101,7 @@ function promptForText(app: App, title: string, placeholder: string): Promise<st
           if (evt.key === 'Enter') { resolve(input.value.trim() || null); this.close(); }
           if (evt.key === 'Escape') { resolve(null); this.close(); }
         });
-        activeWindow.setTimeout(() => input.focus(), 50);
+        window.setTimeout(() => input.focus(), 50);
       }
       onClose() { resolve(null); this.contentEl.empty(); }
     })(app);
@@ -349,7 +349,7 @@ export default class CortexPlugin extends Plugin {
 
       if (this.settings.syncOnStartup && this.settings.apiKey && this.settings.workspaceId) {
         // Defer so startup isn't blocked by sync.
-        activeWindow.setTimeout(() => this.sync.fullSync().catch(e => console.warn('[Cortex] startup sync', e)), 3000);
+        window.setTimeout(() => { void this.sync.fullSync().catch(e => console.warn('[Cortex] startup sync', e)); }, 3000);
       }
       const pane = this.settings.defaultRightPane
         ?? (this.settings.showRelatedPane ? 'related' : 'none');
@@ -359,7 +359,7 @@ export default class CortexPlugin extends Plugin {
         void this.activateRelatedView();
       }
       if (this.settings.mcpEnabled && this.settings.apiKey && this.settings.workspaceId) {
-        activeWindow.setTimeout(() => this.toggleMcpServer(true), 1500);
+        window.setTimeout(() => { void this.toggleMcpServer(true); }, 1500);
       }
 
       // First-run onboarding: open the persistent side-panel checklist.
@@ -373,7 +373,7 @@ export default class CortexPlugin extends Plugin {
           : !!this.settings.workspaceId;
         if (!looksConnected) {
           // Defer past the first paint so Obsidian's own UI is settled.
-          activeWindow.setTimeout(() => void this.activateOnboardingView(), 800);
+          window.setTimeout(() => void this.activateOnboardingView(), 800);
         } else {
           this.settings.onboardingShownAt = Date.now();
           void this.saveSettings();
@@ -560,7 +560,7 @@ export default class CortexPlugin extends Plugin {
     await this.activateChatView();
     // setViewState resolves before the panel finishes mounting; defer one tick
     // so panel.prefill can find the populated input element.
-    activeWindow.setTimeout(() => {
+    window.setTimeout(() => {
       const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
       const view = leaves[0]?.view as ChatView | undefined;
       view?.prefill(text);

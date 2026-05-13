@@ -51,7 +51,7 @@ interface PendingFlow {
   options: SignInOptions;
   resolve: (result: SignInResult) => void;
   reject: (err: Error) => void;
-  // `activeWindow.setTimeout` returns DOM-typed `number`, not Node's `Timeout`.
+  // `window.setTimeout` returns DOM-typed `number`, not Node's `Timeout`.
   timer: number;
 }
 
@@ -93,7 +93,7 @@ async function pkceChallenge(verifier: string): Promise<string> {
 export async function startSignIn(options: SignInOptions): Promise<SignInResult> {
   if (pending) {
     pending.reject(new Error('A new sign-in started; previous attempt cancelled.'));
-    activeWindow.clearTimeout(pending.timer);
+    window.clearTimeout(pending.timer);
     pending = null;
   }
 
@@ -110,7 +110,7 @@ export async function startSignIn(options: SignInOptions): Promise<SignInResult>
   url.searchParams.set('state', state);
 
   return new Promise<SignInResult>((resolve, reject) => {
-    const timer = activeWindow.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       if (pending && pending.state === state) {
         pending = null;
         reject(new Error('Sign-in timed out — close the browser tab and try again.'));
@@ -142,7 +142,7 @@ export async function completeSignIn(params: Record<string, string>): Promise<vo
   }
   const flow = pending;
   pending = null;
-  activeWindow.clearTimeout(flow.timer);
+  window.clearTimeout(flow.timer);
 
   // Did the dashboard return an error?
   const errorCode = params.error;
@@ -210,7 +210,7 @@ export async function completeSignIn(params: Record<string, string>): Promise<vo
 /** Cancel any in-progress sign-in (e.g. on plugin unload). */
 export function cancelSignIn(): void {
   if (pending) {
-    activeWindow.clearTimeout(pending.timer);
+    window.clearTimeout(pending.timer);
     pending.reject(new Error('Sign-in cancelled.'));
     pending = null;
   }
