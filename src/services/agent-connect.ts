@@ -34,13 +34,14 @@ export interface BridgeConfig {
 }
 
 // Lazy-load Node built-ins via Obsidian's Electron host. Read `require` off
-// the global at runtime so esbuild's static analysis can't see the imports
-// and try to bundle them. On mobile (no Node) callers gate via `isDesktop()`.
+// the renderer's window at runtime so esbuild's static analysis can't see
+// the imports and try to bundle them. On mobile (no Node) callers gate via
+// `isDesktop()`.
 type RequireFn = (m: string) => unknown;
 
 function getRequire(): RequireFn | null {
-  const g = globalThis as { require?: unknown };
-  return typeof g.require === 'function' ? (g.require as RequireFn) : null;
+  const w = window as Window & { require?: unknown };
+  return typeof w.require === 'function' ? (w.require as RequireFn) : null;
 }
 
 function nodeFs(): typeof import('fs/promises') {
@@ -154,7 +155,7 @@ async function upsertMcpEntry(
   try {
     const raw = await fs.readFile(configPath, 'utf8');
     fileExisted = true;
-    if (raw.trim()) existing = JSON.parse(raw);
+    if (raw.trim()) existing = JSON.parse(raw) as Record<string, unknown>;
   } catch (e: unknown) {
     const err = e as { code?: string; message?: string };
     if (err?.code !== 'ENOENT') {
@@ -285,7 +286,7 @@ export async function disconnectMcpEntry(configPath: string): Promise<ConnectRes
   }
   let parsed: Record<string, unknown>;
   try {
-    parsed = raw.trim() ? JSON.parse(raw) : {};
+    parsed = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch (e: unknown) {
     return { ok: false, configPath, message: `Config file isn't valid JSON: ${(e as Error)?.message ?? String(e)}` };
   }
@@ -339,10 +340,10 @@ export async function checkConnection(configPath: string | null): Promise<{
     const fs = nodeFs();
     const raw = await fs.readFile(configPath, 'utf8');
     if (!raw.trim()) return { exists: true, connected: false };
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
     // Recognize both the canonical id and the legacy one so existing
     // installs from plugin v≤0.0.9 still report as connected.
-    const mcp = parsed?.mcpServers as Record<string, unknown> | undefined;
+    const mcp = parsed.mcpServers;
     const entry = mcp?.['hangarx'] ?? mcp?.['hangarx-obsidian'];
     return { exists: true, connected: !!entry };
   } catch (e: unknown) {

@@ -156,7 +156,7 @@ export class RelatedView extends ItemView {
     if (this.currentEntityId) return this.currentEntityId;
     if (!this.currentFile) return '';
     // Fast path: graph-pulled notes have cortex_id in their frontmatter.
-    const fmId = this.app.metadataCache.getFileCache(this.currentFile)?.frontmatter?.cortex_id;
+    const fmId: unknown = this.app.metadataCache.getFileCache(this.currentFile)?.frontmatter?.cortex_id;
     if (typeof fmId === 'string' && fmId.length > 0) {
       this.currentEntityId = fmId;
       return fmId;

@@ -534,6 +534,10 @@ export class GraphStatsModal extends Modal {
     const ok = await this.probeHealth();
     this.renderModePill(ok ? 'connected' : 'offline');
     if (this.statusPollTimer == null) {
+      // Disclosed periodic network call: hits the user-configured Cortex
+      // API's /health endpoint every 30s while this modal is open so the
+      // status pill stays accurate. Sends no vault data — just a bare GET.
+      // Timer is cleared in onClose.
       this.statusPollTimer = window.setInterval(() => { void this.runModeProbe(); }, 30_000);
     }
   }
@@ -768,9 +772,9 @@ function parseStringList(input: string[] | string | undefined | null): string[] 
   if (!input) return [];
   if (Array.isArray(input)) return input.filter(s => typeof s === 'string' && s.length > 0);
   try {
-    const parsed = JSON.parse(input);
+    const parsed: unknown = JSON.parse(input);
     if (Array.isArray(parsed)) {
-      return parsed.filter(s => typeof s === 'string' && s.length > 0);
+      return (parsed as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
     }
   } catch {
     // Fall through to comma split

@@ -27,13 +27,13 @@ import { writeMemoryNote } from './vault-writer';
 
 // Lazy-load Node's http module via the Electron renderer's `require`.
 // Wrapped in a function so non-desktop loads don't crash at import time.
-// Reads `globalThis.require` rather than the literal `require(...)`
-// keyword — the obsidianmd ESLint plugin's no-require-imports rule
-// matches the literal call form, but reading require off globalThis
-// is just a property lookup. Returns null on web/mobile builds.
+// Reads `window.require` rather than the literal `require(...)` keyword —
+// the obsidianmd ESLint plugin's no-require-imports rule matches the
+// literal call form, but reading require off the renderer window is just
+// a property lookup. Returns null on web/mobile builds.
 function getHttp(): typeof import('http') | null {
   try {
-    const req = (globalThis as { require?: (m: string) => unknown }).require;
+    const req = (window as Window & { require?: (m: string) => unknown }).require;
     return typeof req === 'function'
       ? (req('http') as typeof import('http'))
       : null;
@@ -180,7 +180,7 @@ export class McpServer {
     req.on('end', () => { void (async () => {
       let request: JsonRpcRequest;
       try {
-        request = JSON.parse(body);
+        request = JSON.parse(body) as JsonRpcRequest;
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }));

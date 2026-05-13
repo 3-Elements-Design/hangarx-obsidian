@@ -75,7 +75,7 @@ export class VaultSync {
     try {
       const adapter = this.app.vault.adapter;
       if (await adapter.exists(INDEX_PATH)) {
-        const raw = JSON.parse(await adapter.read(INDEX_PATH));
+        const raw: unknown = JSON.parse(await adapter.read(INDEX_PATH));
         this.index = mergeIndex(raw, this.settings.vaultId);
       } else {
         this.index = emptyIndex(this.settings.vaultId);

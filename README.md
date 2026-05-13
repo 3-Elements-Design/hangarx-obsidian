@@ -281,6 +281,8 @@ Pick any in **Settings → HangarX → LLM provider keys** (BYOK) or in the per-
 **Excluded by default**: `.cortex/`, `templates/`, plus your vault's config folder (whatever `Vault#configDir` resolves to — usually `.obsidian/`). Configurable in **What to sync**.
 **Attachments**: images, PDFs, and other binaries are ingested by default. Toggle off in **Sync attachments**.
 
+**Background network activity**: while the **Ask your vault** panel or **Knowledge graph stats** modal is open, the plugin polls the configured API's `/health` endpoint every 30 seconds to keep the connection-status pill accurate. The poll sends no vault data — just a bare GET — and stops when the panel/modal closes. Vault syncs are change-driven (triggered by edits/saves), not on a periodic timer.
+
 ---
 
 ## Commands

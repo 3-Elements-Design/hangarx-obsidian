@@ -1582,9 +1582,9 @@ export class ChatPanel {
       const before = data.slice(0, idx);
       const exact = data.slice(idx, idx + name.length);
       const after = data.slice(idx + name.length);
-      const frag = activeDocument.createDocumentFragment();
+      const frag = createFragment();
       if (before) frag.appendChild(activeDocument.createTextNode(before));
-      const mark = activeDocument.createElement('strong');
+      const mark = createEl('strong');
       mark.className = 'cortex-chat-entity-highlight';
       mark.textContent = exact;
       mark.title = `Entity: ${name}`;
@@ -1613,7 +1613,7 @@ export class ChatPanel {
         if (!file) return;
         const content = await this.app.vault.cachedRead(file).catch(() => '');
         if (!content) return;
-        popover = activeDocument.createElement('div');
+        popover = createDiv();
         popover.className = 'cortex-chat-wikilink-preview';
         popover.createDiv({ cls: 'cortex-chat-wikilink-preview-title', text: file.basename });
         popover.createDiv({ cls: 'cortex-chat-wikilink-preview-body', text: content.slice(0, 240) + (content.length > 240 ? '…' : '') });
@@ -1671,7 +1671,7 @@ export class ChatPanel {
         const cite = citations[idx - 1];
         if (!cite) continue;
         if (m.index > lastIdx) parts.push(t.data.slice(lastIdx, m.index));
-        const pill = activeDocument.createElement('a');
+        const pill = createEl('a');
         pill.className = 'cortex-chat-citation-inline';
         pill.textContent = String(idx);
         pill.href = cite.url ?? '#';
@@ -1698,7 +1698,7 @@ export class ChatPanel {
       }
       if (lastIdx === 0) continue; // no replacements
       if (lastIdx < t.data.length) parts.push(t.data.slice(lastIdx));
-      const frag = activeDocument.createDocumentFragment();
+      const frag = createFragment();
       for (const p of parts) {
         if (typeof p === 'string') frag.appendChild(activeDocument.createTextNode(p));
         else frag.appendChild(p);
@@ -1726,12 +1726,12 @@ export class ChatPanel {
       // without breaking flow layout. (Pre is already a block; we just give
       // it position:relative via class.)
       pre.classList.add('cortex-code-block');
-      const toolbar = activeDocument.createElement('div');
+      const toolbar = createDiv();
       toolbar.className = 'cortex-code-toolbar';
-      const copyBtn = activeDocument.createElement('button');
+      const copyBtn = createEl('button');
       copyBtn.className = 'cortex-code-toolbar-btn';
       copyBtn.title = 'Copy to clipboard';
-      const copyIc = copyBtn.appendChild(activeDocument.createElement('span'));
+      const copyIc = copyBtn.appendChild(createSpan());
       setIcon(copyIc, 'copy');
       copyBtn.addEventListener('click', (evt) => {
         evt.preventDefault();
@@ -1745,10 +1745,10 @@ export class ChatPanel {
           }
         })();
       });
-      const saveBtn = activeDocument.createElement('button');
+      const saveBtn = createEl('button');
       saveBtn.className = 'cortex-code-toolbar-btn';
       saveBtn.title = 'Save to a new note';
-      const saveIc = saveBtn.appendChild(activeDocument.createElement('span'));
+      const saveIc = saveBtn.appendChild(createSpan());
       setIcon(saveIc, 'file-plus');
       saveBtn.addEventListener('click', (evt) => {
         evt.preventDefault();
@@ -2281,29 +2281,28 @@ export class ChatPanel {
     if (!root) return;
     root.querySelectorAll('.cortex-graph-filter-pill').forEach(el => el.remove());
 
-    // Use standard DOM `createElement` here — Obsidian's element-helper
-    // extensions (`createDiv` / `createSpan` / `createEl`) are only valid
-    // on regular elements. When called on the global Document they
-    // resolve to a path that ultimately calls `appendChild(document)`,
-    // throwing "Only one element on document allowed." Build the pill
-    // detached, then attach to the graph view's container at the end.
-    const pill = activeDocument.createElement('div');
+    // Use the standalone Obsidian helpers (no `activeDocument.` prefix)
+    // — those create detached elements we can attach later. The
+    // `activeDocument.createDiv()` form would auto-append to the global
+    // Document, which Obsidian rejects ("Only one element on document
+    // allowed").
+    const pill = createDiv();
     pill.className = 'cortex-graph-filter-pill';
-    const label = activeDocument.createElement('span');
+    const label = createSpan();
     label.textContent = matched === totalCited
       ? `Showing ${matched} ${matched === 1 ? 'entity' : 'entities'} from chat`
       : `Showing ${matched} of ${totalCited} entities from chat`;
     pill.appendChild(label);
 
     if (matched < totalCited) {
-      const hint = activeDocument.createElement('span');
+      const hint = createSpan();
       hint.className = 'cortex-graph-filter-pill-hint';
       hint.textContent = ` · ${totalCited - matched} not in vault yet`;
       hint.title = 'Run a graph pull from settings to materialize the rest as files.';
       pill.appendChild(hint);
     }
 
-    const clearBtn = activeDocument.createElement('button');
+    const clearBtn = createEl('button');
     clearBtn.textContent = 'Clear';
     clearBtn.className = 'cortex-graph-filter-pill-clear';
     clearBtn.addEventListener('click', () => {
@@ -2371,7 +2370,7 @@ export class ChatPanel {
         const matchedName = match[1];
         if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
         const entity = entityMap.get(matchedName.toLowerCase());
-        const link = activeDocument.createElement('a');
+        const link = createEl('a');
         link.className = 'cortex-chat-inline-link';
         link.textContent = matchedName;
         link.href = '#';
@@ -2390,7 +2389,7 @@ export class ChatPanel {
       if (lastIndex < text.length) parts.push(text.slice(lastIndex));
 
       if (parts.length > 1) {
-        const frag = activeDocument.createDocumentFragment();
+        const frag = createFragment();
         for (const p of parts) {
           if (typeof p === 'string') frag.appendChild(activeDocument.createTextNode(p));
           else frag.appendChild(p);
@@ -2447,6 +2446,10 @@ export class ChatPanel {
     const ok = await this.probeHealth();
     this.renderModePill(ok ? 'connected' : 'offline');
     if (this.statusPollTimer == null) {
+      // Disclosed periodic network call: hits the user-configured Cortex
+      // API's /health endpoint every 30s while the chat panel is open so
+      // the connection-status pill stays accurate. Sends no vault data —
+      // just a bare GET. Timer is cleared on view close.
       this.statusPollTimer = window.setInterval(() => { void this.runModeProbe(); }, 30_000);
     }
   }
@@ -2661,7 +2664,10 @@ function prettifyToolCallName(name: string): string {
 /** Inline summary of the args a tool was called with, e.g. `"PARA method"`
  *  for a search. Limited to the most informative arg per tool. */
 function summarizeToolCallArgs(name: string, args: Record<string, unknown>): string {
-  const get = (k: string) => (typeof args[k] === 'string' ? (args[k]) : null);
+  const get = (k: string): string | null => {
+    const v = args[k];
+    return typeof v === 'string' ? v : null;
+  };
   let s: string | null = null;
   switch (name) {
     case 'knowledge_graph_search':

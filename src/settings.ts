@@ -3302,10 +3302,10 @@ function parseServerErrorDetail(msg: string): { code?: string; message?: string 
   const m = msg.match(/→ \d{3}: (.*)$/s);
   if (!m) return {};
   try {
-    const body = JSON.parse(m[1]);
+    const body = JSON.parse(m[1]) as { code?: string; message?: string; error?: { code?: string; message?: string } };
     return {
-      code: body?.error?.code || body?.code,
-      message: body?.error?.message || body?.message,
+      code: body.error?.code || body.code,
+      message: body.error?.message || body.message,
     };
   } catch {
     return { message: m[1].slice(0, 240) };

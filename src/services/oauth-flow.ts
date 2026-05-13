@@ -25,6 +25,13 @@ export interface SignInResult {
   userEmail?: string;
 }
 
+interface TokenResponse {
+  access_token?: string;
+  workspaceId: string;
+  organizationId: string;
+  userEmail?: string;
+}
+
 export interface SignInOptions {
   /** Base URL of the dashboard's OAuth consent page (e.g. https://app.hangarx.ai). */
   dashboardUrl: string;
@@ -176,12 +183,15 @@ export async function completeSignIn(params: Record<string, string>): Promise<vo
       throw: false,
     });
     if (res.status >= 400) {
-      const body = (() => { try { return res.json; } catch { return {}; } })();
-      const desc = body?.error_description || body?.error || `Server returned ${res.status}`;
+      const errBody = ((): { error?: string; error_description?: string } => {
+        try { return (res.json as { error?: string; error_description?: string }) ?? {}; }
+        catch { return {}; }
+      })();
+      const desc = errBody.error_description || errBody.error || `Server returned ${res.status}`;
       flow.reject(new Error(desc));
       return;
     }
-    const body = res.json;
+    const body = res.json as TokenResponse;
     if (!body.access_token) {
       flow.reject(new Error('Server didn\'t return an access token.'));
       return;

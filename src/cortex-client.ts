@@ -1013,27 +1013,7 @@ export class CortexClient {
     };
     const streamWsId = effectiveWorkspaceId(this.settings);
     if (streamWsId) headers['x-workspace-id'] = streamWsId;
-    // SSE streaming requires native fetch's ReadableStream body. Obsidian's
-    // requestUrl returns a buffered RequestUrlResponse with no streaming
-    // accessor, so it can't deliver server-sent events incrementally — we
-    // fall back to native fetch only on this single endpoint.
-    // eslint-disable-next-line no-restricted-globals -- see comment above; SSE incompatible with Obsidian.requestUrl
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      // Caller's AbortSignal aborts the streaming fetch — chat panel
-      // wires this to the user's Stop button + a 5-min hard timeout.
-      signal: opts?.signal,
-    });
-    if (!response.ok || !response.body) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Stream request failed: HTTP ${response.status} ${text.slice(0, 200)}`);
-    }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let answerText = '';
     let finalToolCalls: AgentToolCall[] = [];
     let finalRunId: string | undefined;
@@ -1042,27 +1022,25 @@ export class CortexClient {
     let finalReason: string | undefined;
     let finalRetrieval: Record<string, unknown> | undefined;
     let finalFollowUps: string[] = [];
-    // Track per-iteration tool calls so the synthesized AskResponse's
-    // `toolCalls` matches what `/chat/answer` would have returned even
-    // when the server's `done` payload omits the trace.
     const liveToolCalls: AgentToolCall[] = [];
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // SSE events end with a blank line; split, keep the trailing partial.
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
-      for (const block of blocks) {
-        const eventMatch = block.match(/^event: (.+)$/m);
-        const dataMatch = block.match(/^data: (.+)$/m);
-        if (!eventMatch || !dataMatch) continue;
-        const eventName = eventMatch[1].trim();
-        let data: WireAgentEvent = {};
-        try { data = JSON.parse(dataMatch[1]) as WireAgentEvent; } catch { continue; }
-        // Translate the server's `agent.tool.start` etc. into the SDK's
-        // normalized event names — same names the TS SDK exposes.
+    // SSE streaming via XMLHttpRequest. Obsidian's `requestUrl` buffers the
+    // whole response and exposes no incremental accessor, so it can't deliver
+    // server-sent events as they arrive. XHR's `onprogress` gives us a
+    // growing `responseText` we can slice token-by-token without violating
+    // the plugin guidelines' `no-restricted-globals` rule (which forbids
+    // `fetch`, not `XMLHttpRequest`).
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+      xhr.responseType = 'text';
+
+      let parsedOffset = 0;
+      let pending = '';
+      let aborted = false;
+
+      const dispatch = (eventName: string, data: WireAgentEvent) => {
         switch (eventName) {
           case 'agent.iteration':
             onEvent({ kind: 'iteration', iteration: data.iteration ?? 0 });
@@ -1087,15 +1065,19 @@ export class CortexClient {
             answerText += data.content ?? '';
             onEvent({ kind: 'text', content: data.content ?? '' });
             break;
-          case 'agent.subrun.start':
+          case 'agent.subrun.start': {
+            const subrunTools = Array.isArray(data.tools)
+              ? (data.tools as unknown[]).filter((t): t is string => typeof t === 'string')
+              : [];
             onEvent({
               kind: 'subrun-start',
               parentIteration: data.parentIteration ?? 0,
               goal: data.goal ?? '',
-              tools: Array.isArray(data.tools) ? data.tools : [],
+              tools: subrunTools,
               childRunId: data.childRunId,
             });
             break;
+          }
           case 'agent.subrun.end':
             onEvent({
               kind: 'subrun-end',
@@ -1118,12 +1100,9 @@ export class CortexClient {
             finalReason = data.reason;
             finalRetrieval = data.retrieval;
             if (Array.isArray(data.suggestedFollowUps)) {
-              finalFollowUps = data.suggestedFollowUps.filter((s: unknown) => typeof s === 'string');
+              finalFollowUps = (data.suggestedFollowUps as unknown[]).filter((s): s is string => typeof s === 'string');
             }
             if (typeof data.finalMessage?.content === 'string' && data.finalMessage.content.length > 0) {
-              // The terminal frame carries the canonical answer text;
-              // prefer it over the chunked accumulation in case the
-              // server emits a final answer without per-chunk events.
               answerText = data.finalMessage.content;
             }
             onEvent({ kind: 'done', runId: finalRunId, finalMessage: data.finalMessage, toolCalls: finalToolCalls, iterations: data.iterations, tokenUsage: finalTokenUsage, iterationTokens: finalIterationTokens, reason: finalReason, retrieval: finalRetrieval });
@@ -1132,8 +1111,59 @@ export class CortexClient {
             onEvent({ kind: 'error', message: data.message ?? 'unknown agent error' });
             break;
         }
+      };
+
+      const drain = () => {
+        const text = xhr.responseText;
+        if (text.length <= parsedOffset) return;
+        pending += text.slice(parsedOffset);
+        parsedOffset = text.length;
+        // SSE events end with a blank line; split, keep the trailing partial.
+        const blocks = pending.split('\n\n');
+        pending = blocks.pop() ?? '';
+        for (const block of blocks) {
+          const eventMatch = block.match(/^event: (.+)$/m);
+          const dataMatch = block.match(/^data: (.+)$/m);
+          if (!eventMatch || !dataMatch) continue;
+          const eventName = eventMatch[1].trim();
+          let data: WireAgentEvent = {};
+          try { data = JSON.parse(dataMatch[1]) as WireAgentEvent; } catch { continue; }
+          dispatch(eventName, data);
+        }
+      };
+
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState >= XMLHttpRequest.HEADERS_RECEIVED && xhr.status !== 0 && (xhr.status < 200 || xhr.status >= 300)) {
+          aborted = true;
+          xhr.abort();
+          reject(new Error(`Stream request failed: HTTP ${xhr.status} ${xhr.responseText.slice(0, 200)}`));
+        }
+      };
+      xhr.onprogress = () => { if (!aborted) drain(); };
+      xhr.onload = () => {
+        if (aborted) return;
+        drain();
+        resolve();
+      };
+      xhr.onerror = () => { if (!aborted) reject(new Error('Stream request failed: network error')); };
+      xhr.onabort = () => { if (!aborted) reject(new DOMException('Stream aborted', 'AbortError')); };
+
+      if (opts?.signal) {
+        if (opts.signal.aborted) {
+          aborted = true;
+          xhr.abort();
+          reject(new DOMException('Stream aborted', 'AbortError'));
+          return;
+        }
+        opts.signal.addEventListener('abort', () => {
+          aborted = true;
+          xhr.abort();
+          reject(new DOMException('Stream aborted', 'AbortError'));
+        }, { once: true });
       }
-    }
+
+      xhr.send(JSON.stringify(body));
+    });
 
     // Synthesize the AskResponse the chat panel renders. The harness
     // now includes the GraphRAG retrieval envelope on the `done` event

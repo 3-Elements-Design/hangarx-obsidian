@@ -83,7 +83,7 @@ export class GraphPull {
     try {
       const adapter = this.app.vault.adapter;
       if (await adapter.exists(this.indexPath)) {
-        this.index = JSON.parse(await adapter.read(this.indexPath));
+        this.index = JSON.parse(await adapter.read(this.indexPath)) as PullIndex;
       } else {
         this.index = { hashes: {}, paths: {} };
       }
