@@ -148,9 +148,11 @@ Use after the server graph has been reset (Docker volume wiped, container rebuil
 
 # HangarX for Obsidian
 
-> Ask questions about your vault. Share its knowledge with every AI agent on your machine.
+> Stop re-introducing yourself to your AI.
 
-HangarX turns your Obsidian notes into a queryable knowledge graph \u2014 then exposes that graph to Claude Desktop, Claude Code, Cursor, Cline, Windsurf, and any other [MCP-compatible](https://modelcontextprotocol.io) agent. Same vault. Every tool. No copy-pasting context between chats.
+**HangarX turns your Obsidian vault into shared memory that every AI agent on your machine can query.** Instead of re-explaining your projects to Claude, then to Cursor, then to Claude Code, your notes become a queryable knowledge graph \u2014 with entities, relationships, and citations \u2014 exposed through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). Agents can ask questions grounded in your vault, surface related notes, and write new findings back to the graph.
+
+Run it **hosted** (sign in with HangarX, zero setup) or **fully local** (Docker + BYOK for OpenAI, Anthropic, Google, Mistral, Cohere, Groq, Together AI, or Ollama). The plugin ships with: a chat panel that cites the vault notes behind every answer, one-modal two-way sync between vault and graph, live entity highlighting on Obsidian's native graph view, inline wikilink suggestions powered by graph matching, and one-click MCP setup for Claude Desktop, Cursor, Cline, Windsurf, and Claude Code.
 
 \u{1F4D6} [Full docs](https://app.hangarx.ai/obsidian#docs) \xB7 \u{1F310} [Dashboard](https://app.hangarx.ai) \xB7 \u{1F41B} [Issues](https://github.com/3-Elements-Design/hangarx-obsidian/issues)
 
