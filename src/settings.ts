@@ -2029,14 +2029,17 @@ export class CortexSettingTab extends PluginSettingTab {
       while (dropdown.firstChild) dropdown.removeChild(dropdown.firstChild);
       const list = modelsByProvider[providerSel.value] ?? [];
       if (list.length === 0) {
-        const opt = activeDocument.createEl('option');
+        // Standalone createEl (no `activeDocument.` prefix) creates a
+        // DETACHED element. The prefixed form would auto-append to the
+        // document and throw "Only one element on document allowed."
+        const opt = createEl('option');
         opt.value = ''; opt.text = `— no models registered for ${providerSel.value} —`;
         dropdown.appendChild(opt);
         modelSel.value = '';
         return;
       }
       for (const m of list) {
-        const opt = activeDocument.createEl('option');
+        const opt = createEl('option');
         opt.value = m.id; opt.text = m.label || m.id;
         dropdown.appendChild(opt);
       }

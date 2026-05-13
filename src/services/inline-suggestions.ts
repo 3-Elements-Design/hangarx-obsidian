@@ -42,7 +42,10 @@ const suggestionField = StateField.define<Suggestion | null>({
 class GhostWidget extends WidgetType {
   constructor(private text: string) { super(); }
   toDOM(): HTMLElement {
-    const span = activeDocument.createSpan();
+    // Standalone createSpan (no `activeDocument.` prefix) returns a
+    // DETACHED span. The prefixed form would auto-append to the document
+    // and throw "Only one element on document allowed."
+    const span = createSpan();
     span.className = 'cortex-inline-ghost';
     span.textContent = this.text;
     return span;
