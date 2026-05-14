@@ -68,8 +68,13 @@ services:
     image: falkordb/falkordb:latest
     container_name: cortex-falkordb
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:\${FALKORDB_PORT:-6379}:6379"
+    # No host port binding by default — cortex-api reaches falkordb via the
+    # internal Docker network (falkordb:6379), so host port 6379 is only
+    # useful for poking at FalkorDB from your host with redis-cli. Most
+    # users have a Redis or another FalkorDB on 6379 already; uncomment
+    # below (and pick a free host port, e.g. 16379) if you want host access.
+    # ports:
+    #   - "127.0.0.1:\${FALKORDB_PORT:-16379}:6379"
     volumes:
       - falkordb_data:/data
     # Default MAX_QUEUED_QUERIES is 25 — bursty ingestion saturates it and the
@@ -84,8 +89,10 @@ services:
     image: pgvector/pgvector:pg16
     container_name: cortex-postgres
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:\${POSTGRES_PORT:-5432}:5432"
+    # No host port binding by default — same reasoning as falkordb above.
+    # Uncomment to expose for psql access (pick a free port if 5432 is taken).
+    # ports:
+    #   - "127.0.0.1:\${POSTGRES_PORT:-15432}:5432"
     environment:
       POSTGRES_USER: cortex
       POSTGRES_PASSWORD: cortex
@@ -163,6 +170,54 @@ export function generateEncryptionKey(): string {
 }
 
 const DOCKER_START_CMD = `docker compose -f docker-compose.cortex.yml up -d --force-recreate`;
+
+// Setup prompt for agentic coding assistants (Claude Code, Cursor, Cline, etc.).
+// Paired with the "Copy LLM setup prompt" button in step 3 of the local setup
+// wizard so users can hand the terminal side of install to an LLM instead of
+// pasting commands themselves. Mirrored in apps/hangarx-obsidian/README.md
+// under "Hand step 4 to Claude Code" — keep the two in sync when editing.
+const LLM_SETUP_PROMPT = `You're helping me bring up the HangarX local stack for the Obsidian plugin
+(https://community.obsidian.md/plugins/hangarx). Be terse — one update
+per phase, no narration.
+
+1. Find docker-compose.cortex.yml at the root of my Obsidian vault. Ask
+   me for my vault path if you can't infer it. If the file doesn't
+   exist, stop and tell me to open Obsidian → Settings → HangarX →
+   Local mode → click "Save to vault" in step 2, then re-run this prompt.
+
+2. Verify Docker is ready: \`docker --version\` and \`docker ps\` both
+   succeed. If Docker Desktop isn't installed, point me to
+   https://www.docker.com/products/docker-desktop/ and stop. If it's
+   installed but not running, launch it (\`open -a Docker\` on macOS) and
+   wait until \`docker ps\` succeeds before continuing.
+
+3. cd to my vault and run:
+   docker compose -f docker-compose.cortex.yml up -d
+   First run pulls hangarx/cortex-api, falkordb/falkordb, and
+   pgvector/pgvector:pg16 — expect a few minutes.
+
+4. Poll \`curl -sf http://127.0.0.1:3400/health\` every 3 seconds for up
+   to 90 seconds. If it doesn't come up, show me the last 30 lines of
+   \`docker compose -f docker-compose.cortex.yml logs cortex-api\`.
+
+5. Once healthy, tell me to open Obsidian's command palette and run
+   "HangarX: Sync". The plugin's settings page will flip from the
+   three-step wizard to "✓ Local stack running" on its next probe
+   (Retry button on the connection status pill if it doesn't refresh).
+
+If anything fails:
+- Port 3400 in use → \`lsof -i :3400\` to see who's using it. Either
+  stop that process or change CORTEX_PORT in the compose file and
+  re-run with \`up -d --force-recreate\`.
+- cortex-api exits immediately → check the logs. Most common: missing
+  LLM provider key (re-save the YAML from Obsidian with a key
+  configured) or Postgres healthcheck failing on first boot
+  (\`docker compose down -v\` and retry).
+
+Don't generate the docker-compose file yourself — the plugin owns it
+(encryption keys + provider keys are baked in by Obsidian so re-saves
+stay in sync). If the file is missing or broken, hand control back to
+the plugin's "Save to vault" button.`;
 
 /**
  * Slim CortexSettings — Apr 2026 simplification removed:
@@ -395,6 +450,17 @@ export class CortexSettingTab extends PluginSettingTab {
        hides non-matching settings live as the user types.
        ────────────────────────────────────────────────────────────────── */
 
+    // Local-mode setup wizard — pinned to the very top of the page so a
+    // half-finished install can't be missed. Rendered here (outside the
+    // Connection section) and handed into renderLocalConnection so the
+    // health probe inside that section can toggle its visibility.
+    // Starts hidden; shown by runCheck when the stack is unreachable.
+    let localSetupCard: HTMLElement | null = null;
+    if (mode === 'local') {
+      localSetupCard = this.renderLocalSetupCard(containerEl, s);
+      localSetupCard.addClass('is-hidden');
+    }
+
     // Search bar — hides any .setting-item / .cortex-advanced whose
     // name+desc don't match the query. Keeps section headers visible
     // so the user can see which section a remaining match lives in.
@@ -436,7 +502,7 @@ export class CortexSettingTab extends PluginSettingTab {
     }
 
     if (mode === 'local') {
-      this.renderLocalConnection(containerEl, s);
+      this.renderLocalConnection(containerEl, s, localSetupCard);
     }
 
     /* ── 2. Sync (merged "What to sync" + "Sync behavior") ────────── */
@@ -979,7 +1045,7 @@ export class CortexSettingTab extends PluginSettingTab {
    * a working ingest), and API URL / API Key / Workspace ID collapse under a
    * single Advanced disclosure.
    */
-  private renderLocalConnection(containerEl: HTMLElement, s: CortexSettings): void {
+  private renderLocalConnection(containerEl: HTMLElement, s: CortexSettings, setupCard: HTMLElement | null): void {
     // Local mode is auth-disabled (server runs with LOCAL_AUTH_DISABLED=true,
     // bound to 127.0.0.1 only — see compose YAML). The saved cloud apiKey is
     // intentionally preserved so a round-trip Cloud → Local → Cloud doesn't
@@ -1013,9 +1079,9 @@ export class CortexSettingTab extends PluginSettingTab {
     // disturbing the cards above/below.
     const stackHealthWrap = containerEl.createDiv({ cls: 'cortex-stack-health-wrap' });
 
-    // Setup wizard — visible only when the stack is down. Walks new users
-    // through: 1. add a provider key, 2. save Compose file, 3. run command.
-    const setupCard = this.renderLocalSetupCard(containerEl, s);
+    // Setup wizard is rendered at the very top of the settings page (see
+    // display()) so a half-finished install is the first thing the user sees.
+    // We receive a reference here so runCheck can toggle its visibility.
 
     // Running-state confirmation — visible only when the stack is reachable.
     // Without this, a successful first-run looks identical to a half-finished
@@ -1034,7 +1100,7 @@ export class CortexSettingTab extends PluginSettingTab {
       statusText.textContent = this.lastHealthDetail ||
         (ok ? `Connected to ${s.apiUrl}` : `Cannot reach ${s.apiUrl}`);
       retryBtn.removeAttribute('disabled');
-      setupCard.toggleClass('is-hidden', ok);
+      setupCard?.toggleClass('is-hidden', ok);
       runningCard.toggleClass('is-hidden', !ok);
       // Re-render Stack health from the latest probe response.
       this.renderStackHealthPanel(stackHealthWrap, s, ok);
@@ -1101,6 +1167,11 @@ export class CortexSettingTab extends PluginSettingTab {
       if (target.instanceOf(HTMLDetailsElement)) target.open = true;
     });
 
+    // Step 3's warning element — declared here so step 2's save handler can
+    // dismiss it once the YAML exists. Populated below when step 3 renders.
+    let ymlMissingWarn: HTMLElement | null = null;
+    const ymlPath = 'docker-compose.cortex.yml';
+
     // 2. Save the Compose file.
     const step2 = hero.createDiv({ cls: 'cortex-local-hero-step' });
     step2.createSpan({ cls: 'cortex-local-hero-step-num', text: '2.' });
@@ -1110,13 +1181,24 @@ export class CortexSettingTab extends PluginSettingTab {
       cls: 'setting-item-description',
       text: 'Bakes your API key + provider keys into the file. Re-save anytime they change.',
     });
+    // Step 1 is a hard prerequisite: without a provider key, the saved YAML
+    // has empty *_API_KEY entries and the stack will start but refuse to
+    // extract notes. Gate the save button + show why it's disabled.
+    if (!hasKey) {
+      step2Body.createDiv({
+        cls: 'cortex-dep-hint',
+        text: '⚠ Add a key in step 1 first — without one the saved file has no provider credentials and extraction will fail.',
+      });
+    }
     const step2Actions = step2Body.createDiv({ cls: 'cortex-local-hero-step-actions' });
     const saveBtn = step2Actions.createEl('button', { text: 'Save to vault', cls: 'mod-cta' });
+    saveBtn.disabled = !hasKey;
     saveBtn.addEventListener('click', () => { void (async () => {
       try {
-        const path = 'docker-compose.cortex.yml';
-        await this.plugin.app.vault.adapter.write(path, buildDockerComposeWithKeys(s));
+        await this.plugin.app.vault.adapter.write(ymlPath, buildDockerComposeWithKeys(s));
         saveBtn.setText('✓ saved');
+        ymlMissingWarn?.remove();
+        ymlMissingWarn = null;
         window.setTimeout(() => saveBtn.setText('Save to vault'), 2000);
       } catch (e) {
         saveBtn.setText('Failed — check console');
@@ -1124,6 +1206,7 @@ export class CortexSettingTab extends PluginSettingTab {
       }
     })(); });
     const copyYamlBtn = step2Actions.createEl('button', { text: 'Copy YAML' });
+    copyYamlBtn.disabled = !hasKey;
     copyYamlBtn.addEventListener('click', () => { void (async () => {
       await navigator.clipboard.writeText(buildDockerComposeWithKeys(s));
       copyYamlBtn.setText('Copied');
@@ -1135,6 +1218,15 @@ export class CortexSettingTab extends PluginSettingTab {
     step3.createSpan({ cls: 'cortex-local-hero-step-num', text: '3.' });
     const step3Body = step3.createDiv({ cls: 'cortex-local-hero-step-body' });
     step3Body.createDiv({ text: 'Run this in your vault folder:', cls: 'cortex-local-hero-step-label' });
+    // Pre-flight: docker compose -f <file> fails with "no such file or
+    // directory" if step 2 was skipped. Surface that here so users see the
+    // missing prerequisite before they paste the command into a terminal.
+    if (!this.plugin.app.vault.getAbstractFileByPath(ymlPath)) {
+      ymlMissingWarn = step3Body.createDiv({
+        cls: 'cortex-dep-hint',
+        text: '⚠ Save the Compose file first — click "Save to vault" in step 2 above. Otherwise docker compose will exit with "no such file or directory".',
+      });
+    }
     const codeWrap = step3Body.createDiv({ cls: 'cortex-mcp-code-wrap' });
     const copyCmdBtn = codeWrap.createEl('button', { cls: 'cortex-mcp-copy', text: 'Copy' });
     copyCmdBtn.addEventListener('click', () => { void (async () => {
@@ -1147,6 +1239,21 @@ export class CortexSettingTab extends PluginSettingTab {
       }, 1400);
     })(); });
     codeWrap.createEl('pre').createEl('code', { text: DOCKER_START_CMD });
+
+    // Escape hatch for users who don't want to touch a terminal: hand the
+    // docker step off to an agentic coding assistant. The prompt is the same
+    // one documented in README.md under "Hand step 4 to Claude Code".
+    step3Body.createDiv({
+      cls: 'setting-item-description',
+      text: 'Prefer not to use a terminal? Paste this into Claude Code / Cursor / Cline:',
+    });
+    const step3Actions = step3Body.createDiv({ cls: 'cortex-local-hero-step-actions' });
+    const copyPromptBtn = step3Actions.createEl('button', { text: 'Copy LLM setup prompt' });
+    copyPromptBtn.addEventListener('click', () => { void (async () => {
+      await navigator.clipboard.writeText(LLM_SETUP_PROMPT);
+      copyPromptBtn.setText('✓ copied');
+      window.setTimeout(() => copyPromptBtn.setText('Copy LLM setup prompt'), 1800);
+    })(); });
 
     return hero;
   }

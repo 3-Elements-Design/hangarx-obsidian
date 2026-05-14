@@ -81,12 +81,63 @@ Best for trying HangarX out. Sign-in is OAuth, no key copy-paste.
 Everything runs in Docker on your machine. Notes never leave the laptop.
 
 1. Settings → **HangarX → Connection** → Mode: **Local (docker)**
-2. Click **Save Compose to vault** — writes `docker-compose.cortex.yml` next to your notes
-3. In a terminal: `docker compose -f docker-compose.cortex.yml up -d`
-4. Add at least one LLM key in **LLM provider keys** (Gemini, OpenAI, Anthropic, Kimi, HuggingFace, OpenRouter, xAI, or Ollama for fully offline)
+2. Add at least one LLM key in **LLM provider keys** (Gemini, OpenAI, Anthropic, Kimi, HuggingFace, OpenRouter, xAI, or Ollama for fully offline)
+3. Click **Save to vault** — writes `docker-compose.cortex.yml` next to your notes with your keys baked in
+4. In a terminal: `docker compose -f docker-compose.cortex.yml up -d`
 5. Run **Sync** from the command palette
 
 > Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/). Images are pulled from Docker Hub (`hangarx/cortex-api`) — no source code or Node.js needed.
+
+#### Hand step 4 to Claude Code (or any LLM agent)
+
+After step 3, instead of opening a terminal yourself, paste this prompt into Claude Code, Cursor, Cline, or any agentic coding assistant. It handles Docker checks, startup, health-polling, and troubleshooting.
+
+```text
+You're helping me bring up the HangarX local stack for the Obsidian plugin
+(https://community.obsidian.md/plugins/hangarx). Be terse — one update
+per phase, no narration.
+
+1. Find docker-compose.cortex.yml at the root of my Obsidian vault. Ask
+   me for my vault path if you can't infer it. If the file doesn't
+   exist, stop and tell me to open Obsidian → Settings → HangarX →
+   Local mode → click "Save to vault" in step 2, then re-run this prompt.
+
+2. Verify Docker is ready: `docker --version` and `docker ps` both
+   succeed. If Docker Desktop isn't installed, point me to
+   https://www.docker.com/products/docker-desktop/ and stop. If it's
+   installed but not running, launch it (`open -a Docker` on macOS) and
+   wait until `docker ps` succeeds before continuing.
+
+3. cd to my vault and run:
+   docker compose -f docker-compose.cortex.yml up -d
+   First run pulls hangarx/cortex-api, falkordb/falkordb, and
+   pgvector/pgvector:pg16 — expect a few minutes.
+
+4. Poll `curl -sf http://127.0.0.1:3400/health` every 3 seconds for up
+   to 90 seconds. If it doesn't come up, show me the last 30 lines of
+   `docker compose -f docker-compose.cortex.yml logs cortex-api`.
+
+5. Once healthy, tell me to open Obsidian's command palette and run
+   "HangarX: Sync". The plugin's settings page will flip from the
+   three-step wizard to "✓ Local stack running" on its next probe
+   (Retry button on the connection status pill if it doesn't refresh).
+
+If anything fails:
+- Port 3400 in use → `lsof -i :3400` to see who's using it. Either
+  stop that process or change CORTEX_PORT in the compose file and
+  re-run with `up -d --force-recreate`.
+- cortex-api exits immediately → check the logs. Most common: missing
+  LLM provider key (re-save the YAML from Obsidian with a key
+  configured) or Postgres healthcheck failing on first boot
+  (`docker compose down -v` and retry).
+
+Don't generate the docker-compose file yourself — the plugin owns it
+(encryption keys + provider keys are baked in by Obsidian so re-saves
+stay in sync). If the file is missing or broken, hand control back to
+the plugin's "Save to vault" button.
+```
+
+> The same prompt is available as a "Copy LLM setup prompt" button next to the docker command in step 3 of the plugin's local setup wizard.
 
 ---
 
