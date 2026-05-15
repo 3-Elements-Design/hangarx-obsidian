@@ -154,7 +154,51 @@ export async function writeConversationNote(
 }
 
 /**
+ * Pull a leading `---...---` YAML block out of the supplied content. Returns
+ * the parsed key/value map plus the remaining body. Hand-rolled (rather than
+ * a YAML dep) because the surface we need to handle is small: simple
+ * `key: value` lines, optional flow-style arrays (`[a, b, c]`). Returns
+ * `{ fm: {}, body: content }` unchanged when no leading frontmatter exists.
+ *
+ * Why this exists: agents calling cortex_remember sometimes include their own
+ * YAML frontmatter in the `content` payload (aliases, tags, links, etc.).
+ * The old write path naively prepended the plugin's auto-frontmatter and
+ * shoved the caller's content directly after — producing two YAML blocks,
+ * only the first of which Obsidian's parser recognised. The caller's
+ * frontmatter ended up rendered as body text and `aliases` never registered,
+ * breaking wikilink resolution.
+ */
+function extractLeadingFrontmatter(content: string): { fm: Record<string, string>; body: string } {
+  // Match: opening ---\n, captured body, closing \n---(\n? to allow trailing
+  // newline or EOF). Non-greedy on the captured group so an early closing
+  // --- wins over a later one inside the body.
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!match) return { fm: {}, body: content };
+  const fm: Record<string, string> = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const m = line.match(/^([\w-]+):\s*(.*)$/);
+    if (m) fm[m[1]] = m[2];
+  }
+  return { fm, body: content.slice(match[0].length) };
+}
+
+/** Parse flow-style or single-value YAML list into an array of strings.
+ *  Handles `[a, b, c]`, `[a]`, and bare values. Quoted strings are unwrapped. */
+function parseInlineList(value: string): string[] {
+  const flow = value.match(/^\[(.*)\]$/);
+  const inner = flow ? flow[1] : value;
+  return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+}
+
+/**
  * Write an agent memory as a vault note.
+ *
+ * Frontmatter handling: plugin-managed keys (`type`, `date`, `category`,
+ * `source`) always win — those identify the file as a cortex memory and
+ * shouldn't be redefinable by the caller. Tags from `data.tags` (the MCP
+ * arg) AND tags inside the caller's leading frontmatter are unioned.
+ * Every other caller-supplied frontmatter key (aliases, custom tags,
+ * project, etc.) is preserved verbatim.
  */
 export async function writeMemoryNote(
   app: App,
@@ -165,18 +209,46 @@ export async function writeMemoryNote(
   const title = sanitize(data.title || data.content.slice(0, 50));
   const path = uniquePath(app, folder, `${dateStamp()} - ${title}`);
 
-  const frontmatter = [
-    '---',
-    `type: cortex-memory`,
-    `date: ${timeStamp()}`,
-    `category: ${data.category || 'agent_memory'}`,
-    `source: ${data.source || 'mcp'}`,
-  ];
-  if (data.tags?.length) frontmatter.push(`tags: [${data.tags.join(', ')}]`);
+  const { fm: callerFm, body: cleanBody } = extractLeadingFrontmatter(data.content);
+
+  // Plugin-managed keys. These override caller's values on conflict — the
+  // plugin owns the identity of these files, and "type: cortex-memory" being
+  // overridable would mean other surfaces can't reliably distinguish memories
+  // from regular notes.
+  const autoFm: Record<string, string> = {
+    type: 'cortex-memory',
+    date: timeStamp(),
+    category: data.category || 'agent_memory',
+    source: data.source || 'mcp',
+  };
+
+  // Caller's frontmatter first, plugin overrides last so plugin keys win.
+  const merged: Record<string, string> = { ...callerFm, ...autoFm };
+
+  // Union all tags from both sources, dedupe, write back in flow style.
+  // This handles three cases cleanly:
+  //   - tags from data.tags only → wrote as flow array
+  //   - tags in caller's frontmatter only → preserved
+  //   - both → unioned without duplication
+  const allTags = new Set<string>();
+  if (data.tags?.length) {
+    for (const t of data.tags) allTags.add(t);
+  }
+  if (callerFm.tags) {
+    for (const t of parseInlineList(callerFm.tags)) allTags.add(t);
+  }
+  if (allTags.size > 0) {
+    merged.tags = `[${[...allTags].join(', ')}]`;
+  } else {
+    delete merged.tags;
+  }
+
+  const frontmatter: string[] = ['---'];
+  for (const [key, value] of Object.entries(merged)) {
+    frontmatter.push(`${key}: ${value}`);
+  }
   frontmatter.push('---', '');
 
-  const body = data.content;
-
-  await app.vault.create(path, frontmatter.join('\n') + '\n' + body + '\n');
+  await app.vault.create(path, frontmatter.join('\n') + '\n' + cleanBody + '\n');
   return path;
 }
