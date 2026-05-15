@@ -203,7 +203,11 @@ export class VaultSync {
      *  and community detection). The caller is responsible for triggering the
      *  cleanup pass afterwards via the "Rebuild communities + reindex" command. */
     fastMode?: boolean;
-  }): Promise<{ synced: number; skipped: number; deleted: number; failed?: number; failedPaths?: string[]; paused?: string; syncJobId?: string }> {
+    /** Bypass the per-file hash check so every file is re-ingested. Use when
+     *  the server-side graph has been wiped/lost and the local index falsely
+     *  reports everything as already synced. */
+    force?: boolean;
+  }): Promise<{ synced: number; unchanged: number; skipped: number; deleted: number; failed?: number; failedPaths?: string[]; paused?: string; syncJobId?: string }> {
     await this.loadIndex();
 
     const all = this.app.vault.getMarkdownFiles();
@@ -226,7 +230,14 @@ export class VaultSync {
       signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    let synced = 0, skipped = 0, deleted = 0;
+    // Counters are intentionally split:
+    //   synced    — file actually pushed (new or changed body)
+    //   unchanged — hash matches stored state; no work needed
+    //   skipped   — file had no syncable body (frontmatter-only, etc.)
+    // Previously syncFile's 'unchanged' result got folded into `skipped` and
+    // its 'skipped' result was silently dropped, leaving callers (and MCP
+    // agents) unable to distinguish "all up to date" from "all unsyncable".
+    let synced = 0, unchanged = 0, skipped = 0, deleted = 0;
     let failed = 0;
     const failedPaths: string[] = [];
     const seenPaths = new Set<string>();
@@ -256,9 +267,11 @@ export class VaultSync {
           const result = await this.syncFile(file, /* persistImmediately */ false, {
             fastMode: opts?.fastMode === true,
             syncJobId,
+            force: opts?.force === true,
           });
           if (result === 'synced') synced++;
-          else if (result === 'unchanged') skipped++;
+          else if (result === 'unchanged') unchanged++;
+          else skipped++;
         } catch (e) {
           failed++;
           failedPaths.push(file.path);
@@ -278,7 +291,7 @@ export class VaultSync {
     if (signal?.aborted) {
       this.index.lastFullSyncAt = Date.now();
       await this.saveIndex();
-      return { synced, skipped, deleted: 0, failed, failedPaths, paused: 'cancelled', syncJobId };
+      return { synced, unchanged, skipped, deleted: 0, failed, failedPaths, paused: 'cancelled', syncJobId };
     }
 
     // Detect deletions: anything we know about that's no longer in the vault
@@ -322,7 +335,7 @@ export class VaultSync {
 
     this.index.lastFullSyncAt = Date.now();
     await this.saveIndex();
-    return { synced, skipped, deleted, failed, failedPaths, syncJobId };
+    return { synced, unchanged, skipped, deleted, failed, failedPaths, syncJobId };
   }
 
   // ---------- Single-file sync ----------------------------------------
@@ -415,18 +428,22 @@ export class VaultSync {
    * the auto-sync debouncer so the user gets an immediate push. Returns the
    * usual three-way result so the caller can show a Notice based on outcome.
    */
-  async syncOneFile(file: TFile, opts: { fastMode?: boolean; syncJobId?: string } = {}): Promise<'synced' | 'unchanged' | 'skipped'> {
+  async syncOneFile(file: TFile, opts: { fastMode?: boolean; syncJobId?: string; force?: boolean } = {}): Promise<'synced' | 'unchanged' | 'skipped'> {
     return this.syncFile(file, true, opts);
   }
 
   /**
    * Returns 'synced' | 'unchanged' | 'skipped'. If `persistImmediately` is
    * false, the caller is responsible for calling saveIndex().
+   * `opts.force` bypasses the per-file hash check — useful when the
+   * server-side graph has been wiped or partially lost: the local index
+   * still thinks files are synced, but the graph disagrees. Caller is
+   * responsible for deciding when to force.
    */
   private async syncFile(
     file: TFile,
     persistImmediately = true,
-    opts: { fastMode?: boolean; syncJobId?: string } = {},
+    opts: { fastMode?: boolean; syncJobId?: string; force?: boolean } = {},
   ): Promise<'synced' | 'unchanged' | 'skipped'> {
     await this.loadIndex();
 
@@ -438,7 +455,7 @@ export class VaultSync {
     const hash = await this.hashContent(content);
 
     const prior = this.getFileState(file.path);
-    if (prior && prior.hash === hash) return 'unchanged';
+    if (!opts.force && prior && prior.hash === hash) return 'unchanged';
 
     // Errors propagate to the caller — no try/catch needed since we
     // don't transform or recover here. The caller (fullSync /

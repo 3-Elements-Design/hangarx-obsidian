@@ -290,7 +290,7 @@ export class SyncModal extends Modal {
       );
     });
 
-    let pushResult: { synced: number; deleted: number; skipped: number } | null = null;
+    let pushResult: { synced: number; deleted: number; skipped: number; unchanged: number } | null = null;
     try {
       if (opts.forceReingest) {
         await this.plugin.sync.clearIndex();
@@ -330,7 +330,7 @@ export class SyncModal extends Modal {
       // line summarising the push happens inside the GraphPullModal title
       // bar via sourceLabel; success Notice covers the final summary.
       new Notice(
-        `Push complete — ${pushResult.synced} synced, ${pushResult.deleted} removed, ${pushResult.skipped} skipped. Starting import…`,
+        `Push complete — ${pushResult.synced} synced, ${pushResult.deleted} removed, ${pushResult.unchanged} unchanged. Starting import…`,
         4000,
       );
       this.close();
@@ -343,7 +343,10 @@ export class SyncModal extends Modal {
     const grid = statsEl.createDiv({ cls: 'cortex-pull-stat-grid' });
     this.receiptItem(grid, 'plus-circle', `${pushResult.synced} synced`, 'cortex-pull-stat-create');
     this.receiptItem(grid, 'trash-2', `${pushResult.deleted} removed`, 'cortex-pull-stat-delete');
-    this.receiptItem(grid, 'minus-circle', `${pushResult.skipped} skipped (unchanged)`, 'cortex-pull-stat-total');
+    this.receiptItem(grid, 'minus-circle', `${pushResult.unchanged} unchanged`, 'cortex-pull-stat-total');
+    if (pushResult.skipped > 0) {
+      this.receiptItem(grid, 'circle-slash', `${pushResult.skipped} unsyncable (empty)`, 'cortex-pull-stat-total');
+    }
 
     // Fresh button row — the original cancelBtn still has the abort listener
     // attached, so re-skinning it as "Done" leaves stale handlers. Easier to

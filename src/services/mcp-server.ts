@@ -540,59 +540,97 @@ export class McpServer {
         description:
           'Trigger an ingest pass over the user\'s vault. Without `path`, runs a full vault sync ' +
           '(may take minutes on first run; incremental thereafter). With `path` set to a file or ' +
-          'folder, only that scope is synced. Use when cortex_recall / cortex_search_entities ' +
-          'misses content the user says exists on disk — the file is likely just unindexed.',
+          'folder, only that scope is synced. The response splits unchanged-by-hash from truly ' +
+          'unsyncable (`unchanged` vs `skipped`) and surfaces `serverGraphEmpty` when the local ' +
+          'index says everything is synced but the server graph is empty — in that case re-call ' +
+          'with `force: true` to bypass the hash check and re-push every file.',
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', description: 'Optional vault-relative path. File → just that file. Folder → all markdown under it. Omit → full vault.' },
             fastMode: { type: 'boolean', description: 'Skip post-ingest VDB indexing + community detection for speed. Caller should run "Rebuild communities + reindex" afterwards if used.' },
+            force: { type: 'boolean', description: 'Bypass the per-file hash check so every file is re-ingested. Use when the server graph has been wiped/reset and the local index falsely reports files as already synced.' },
           },
         },
         handler: async (args) => {
-          const { path, fastMode } = args as { path?: string; fastMode?: boolean };
-          const sync = (this.plugin as CortexPlugin).sync;
+          const { path, fastMode, force } = args as { path?: string; fastMode?: boolean; force?: boolean };
+          const plugin = this.plugin as CortexPlugin;
+          let result: { synced: number; unchanged: number; skipped: number; deleted?: number; failed?: number; failedPaths?: string[]; total?: number };
           if (!path) {
-            return sync.fullSync({ fastMode });
+            result = await plugin.sync.fullSync({ fastMode, force });
+          } else {
+            const node = this.plugin.app.vault.getAbstractFileByPath(path);
+            if (!node) return { error: `No file or folder at vault path: ${path}` };
+            const targets: TFile[] = node instanceof TFolder
+              ? this.plugin.app.vault.getMarkdownFiles().filter(f => f.path.startsWith(node.path + '/') || f.path === node.path)
+              : node instanceof TFile && node.extension === 'md'
+                ? [node]
+                : [];
+            if (targets.length === 0) return { error: `No markdown files at: ${path}` };
+            let synced = 0, unchanged = 0, skipped = 0, failed = 0;
+            const failedPaths: string[] = [];
+            for (const f of targets) {
+              try {
+                const r = await plugin.sync.syncOneFile(f, { fastMode, force });
+                if (r === 'synced') synced++;
+                else if (r === 'unchanged') unchanged++;
+                else skipped++;
+              } catch (e) {
+                failed++;
+                failedPaths.push(f.path);
+                console.warn('[Cortex MCP] sync failed for', f.path, e);
+              }
+            }
+            result = { synced, unchanged, skipped, failed, failedPaths, total: targets.length };
           }
-          const node = this.plugin.app.vault.getAbstractFileByPath(path);
-          if (!node) return { error: `No file or folder at vault path: ${path}` };
-          const targets: TFile[] = node instanceof TFolder
-            ? this.plugin.app.vault.getMarkdownFiles().filter(f => f.path.startsWith(node.path + '/') || f.path === node.path)
-            : node instanceof TFile && node.extension === 'md'
-              ? [node]
-              : [];
-          if (targets.length === 0) return { error: `No markdown files at: ${path}` };
-          let synced = 0, unchanged = 0, skipped = 0, failed = 0;
-          const failedPaths: string[] = [];
-          for (const f of targets) {
+          // Drift detection: when the indexer thinks everything is up to date
+          // (synced=0, unchanged>0, nothing deleted) but the server graph is
+          // empty, the local hash index is lying. Surface that so the agent
+          // can re-call with force:true instead of giving up.
+          let serverGraphEmpty: boolean | null = null;
+          let hint: string | undefined;
+          if (!force && result.synced === 0 && result.unchanged > 0 && (result.deleted ?? 0) === 0) {
             try {
-              const result = await sync.syncOneFile(f, { fastMode });
-              if (result === 'synced') synced++;
-              else if (result === 'unchanged') unchanged++;
-              else skipped++;
-            } catch (e) {
-              failed++;
-              failedPaths.push(f.path);
-              console.warn('[Cortex MCP] sync failed for', f.path, e);
+              const stats = await c.getGraphStats();
+              serverGraphEmpty = (stats?.totalEntities ?? 0) === 0;
+              if (serverGraphEmpty) {
+                hint = 'The local sync index says all files are up to date, but the server graph is empty. The graph has likely been reset. Re-call cortex_sync with `force: true` to bypass the hash check and re-push every file.';
+              }
+            } catch {
+              /* stats fetch failed — don't compound a sync issue with a stats issue */
             }
           }
-          return { synced, unchanged, skipped, failed, failedPaths, total: targets.length };
+          return { ...result, serverGraphEmpty, hint };
         },
       },
       {
         name: 'cortex_sync_status',
         description:
           'Diagnostic: how out-of-date is the graph relative to the vault on disk? Returns counts ' +
-          'of files added/changed/deleted since the last sync, total markdown count, and the ' +
-          'most recent file-sync timestamp. Use to decide whether to call cortex_sync.',
+          'of files added/changed/deleted since the last sync, total markdown count, the most ' +
+          'recent file-sync timestamp, and (when the local index claims everything is synced) ' +
+          'a drift check against the server graph. Use to decide whether to call cortex_sync — ' +
+          'and whether to pass `force: true`.',
         inputSchema: { type: 'object', properties: {} },
         handler: async () => {
           const sync = (this.plugin as CortexPlugin).sync;
           const status = await sync.getChangesSinceLastSync();
+          // Drift probe: only meaningful when the local index thinks there
+          // are some files to skip. If the index already says "nothing
+          // indexed", the user hasn't synced yet and there's nothing to
+          // diverge against.
+          let serverGraphEmpty: boolean | null = null;
+          if (status.total > 0 && status.added === 0 && status.changed === 0) {
+            try {
+              const stats = await c.getGraphStats();
+              serverGraphEmpty = (stats?.totalEntities ?? 0) === 0;
+            } catch { /* see cortex_sync rationale */ }
+          }
           return {
             ...status,
-            syncRecommended: status.added > 0 || status.changed > 0 || status.deleted > 0,
+            serverGraphEmpty,
+            syncRecommended: status.added > 0 || status.changed > 0 || status.deleted > 0 || serverGraphEmpty === true,
+            forceRecommended: serverGraphEmpty === true,
             lastSyncedAtIso: status.lastSyncedAt ? new Date(status.lastSyncedAt).toISOString() : null,
           };
         },
@@ -687,7 +725,7 @@ export class McpServer {
           const resolved = this.plugin.app.metadataCache.resolvedLinks ?? {};
           const backlinks: string[] = [];
           for (const [from, targets] of Object.entries(resolved)) {
-            if ((targets as Record<string, number>)[path] && from !== path) backlinks.push(from);
+            if (targets[path] && from !== path) backlinks.push(from);
           }
           return {
             path: node.path,

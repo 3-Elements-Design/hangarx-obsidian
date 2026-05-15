@@ -712,14 +712,14 @@ export default class CortexPlugin extends Plugin {
         signal: abort.signal,
       });
       progress.notice.hide();
-      const { synced, skipped, deleted, failed = 0, failedPaths = [], paused } = result;
+      const { synced, unchanged, skipped, deleted, failed = 0, failedPaths = [], paused } = result;
       if (paused === 'cancelled') {
-        new Notice(`⏹ HangarX sync cancelled — ${synced} synced, ${skipped} unchanged so far.`, 5000);
+        new Notice(`⏹ HangarX sync cancelled — ${synced} synced, ${unchanged} unchanged so far.`, 5000);
         return;
       }
       const headline = failed > 0
-        ? `⚠️ HangarX sync: ${synced} updated, ${skipped} unchanged, ${deleted} removed, ${failed} FAILED`
-        : `✅ HangarX sync: ${synced} updated, ${skipped} unchanged, ${deleted} removed`;
+        ? `⚠️ HangarX sync: ${synced} updated, ${unchanged} unchanged, ${deleted} removed, ${failed} FAILED${skipped > 0 ? ` (${skipped} unsyncable)` : ''}`
+        : `✅ HangarX sync: ${synced} updated, ${unchanged} unchanged, ${deleted} removed${skipped > 0 ? ` (${skipped} unsyncable)` : ''}`;
       new Notice(headline, failed > 0 ? 10000 : 4000);
       if (failed > 0) {
         const sample = failedPaths.slice(0, 3).join(', ');
@@ -728,8 +728,8 @@ export default class CortexPlugin extends Plugin {
       }
 
       // Server-state vs index-state divergence: surface when the local index
-      // says everything is synced but the server graph is empty.
-      if (synced === 0 && skipped > 0) {
+      // says everything is synced (unchanged) but the server graph is empty.
+      if (synced === 0 && unchanged > 0) {
         let serverEmpty = false;
         try {
           const stats = await this.client.getGraphStats();
@@ -739,7 +739,7 @@ export default class CortexPlugin extends Plugin {
         }
         if (serverEmpty) {
           new Notice(
-            `⚠️ Index says ${skipped} files are already synced, but the server graph is empty. ` +
+            `⚠️ Index says ${unchanged} files are already synced, but the server graph is empty. ` +
             'Run "Force re-ingest entire vault" from the command palette to re-push everything.',
             12000,
           );
@@ -795,8 +795,10 @@ export default class CortexPlugin extends Plugin {
       // Surface the cleanup as a single tappable Notice so the user doesn't
       // forget — without it, vector search and community-aware retrieval
       // stay thinner than usual until the next normal sync runs.
+      // (After clearIndex(), `unchanged` is always 0, so reporting only
+      // synced/skipped/deleted keeps the message tight.)
       const noticeText =
-        `✅ Force-resync done: ${synced} ingested, ${skipped} skipped, ${deleted} removed.\n` +
+        `✅ Force-resync done: ${synced} ingested, ${skipped} unsyncable, ${deleted} removed.\n` +
         `Click here to rebuild communities + reindex (recommended).`;
       const finishNotice = new Notice(noticeText, 12000);
       finishNotice.messageEl.addClass('cortex-clickable-notice');
