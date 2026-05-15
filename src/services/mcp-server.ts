@@ -705,6 +705,43 @@ export class McpServer {
         },
       },
       {
+        name: 'cortex_dedupe',
+        description:
+          'Find and merge duplicate Entity nodes in the graph — groups by (workspaceId, type, ' +
+          'lowercased name) and consolidates each group into a single winner. The ingest pipeline ' +
+          'occasionally emits two entities for the same logical thing (structural-ID Note + ' +
+          'LLM-ID Concept with the same name), and LLM naming variance across re-ingests ' +
+          'compounds the bloat over time. Use after a force-resync or when cortex_stats shows ' +
+          'Note count >> file count on disk. Pass `dryRun: true` to inspect the merge plan ' +
+          'without mutating. Idempotent. Requires cortex-api 1.0.2+ — returns an error on older ' +
+          'versions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityType: { type: 'string', description: 'Restrict dedup to one entity type (e.g. "Note", "Concept"). Omit to dedup all types.' },
+            dryRun: { type: 'boolean', description: 'When true, return the merge plan without mutating the graph.' },
+            maxGroups: { type: 'number', description: 'Cap on duplicate groups to inspect per call (default 5000).' },
+          },
+        },
+        handler: async (args) => {
+          const { entityType, dryRun, maxGroups } = args as { entityType?: string; dryRun?: boolean; maxGroups?: number };
+          try {
+            return await c.dedupeEntities({ entityType, dryRun, maxGroups });
+          } catch (e) {
+            // Older cortex-api versions 404 on this endpoint — return a
+            // structured hint instead of a raw HTTP error so the agent can
+            // tell the user to update their Docker image.
+            const msg = (e as Error).message ?? String(e);
+            if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
+              return {
+                error: 'cortex_dedupe requires cortex-api 1.0.2 or later. Re-save docker-compose.cortex.yml from the setup wizard and `docker compose up -d --force-recreate` to pull the new image.',
+              };
+            }
+            return { error: msg };
+          }
+        },
+      },
+      {
         name: 'cortex_rebuild_status',
         description:
           'Poll the status of a cortex_rebuild job. Returns { state: "running" | "completed" | "failed", ' +

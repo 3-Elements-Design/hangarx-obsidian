@@ -694,6 +694,43 @@ export class CortexClient {
     return res.data;
   }
 
+  /**
+   * Cleanup pass for the duplicate-entity bloat caused by the ingest path's
+   * structural + LLM extraction layers emitting differently-ID'd entities
+   * for the same logical thing. Groups by (workspaceId, type, lowercased
+   * name), merges losers into a structural-ID winner. Idempotent; dryRun
+   * returns the merge plan without mutating. Backed by
+   * POST /v1/graph/entities/dedupe (cortex-api 1.0.2+). Older API versions
+   * 404; caller should treat that as "not supported, skip".
+   */
+  async dedupeEntities(opts: {
+    entityType?: string;
+    dryRun?: boolean;
+    maxGroups?: number;
+  } = {}): Promise<{
+    groupsFound: number;
+    entitiesMerged: number;
+    relationshipsTransferred: number;
+    sampleMerges: Array<{ name: string; type: string; winner: string; losers: string[] }>;
+    dryRun: boolean;
+  }> {
+    const res = await this.req<{ data: {
+      groupsFound: number;
+      entitiesMerged: number;
+      relationshipsTransferred: number;
+      sampleMerges: Array<{ name: string; type: string; winner: string; losers: string[] }>;
+      dryRun: boolean;
+    } }>('/v1/graph/entities/dedupe', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(opts.entityType ? { entityType: opts.entityType } : {}),
+        ...(opts.dryRun === true ? { dryRun: true } : {}),
+        ...(typeof opts.maxGroups === 'number' ? { maxGroups: opts.maxGroups } : {}),
+      }),
+    });
+    return res.data;
+  }
+
   async deleteNote(filePath: string): Promise<void> {
     await this.req('/v1/ingest/documents/by-path/delete', {
       method: 'POST',
