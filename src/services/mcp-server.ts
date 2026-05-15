@@ -871,6 +871,48 @@ export class McpServer {
         },
       },
       {
+        name: 'cortex_delete_note',
+        description:
+          'Delete a note from the user\'s vault by vault-relative path. Defaults to moving the ' +
+          'file to the OS trash (recoverable); pass `permanent: true` only when you\'re certain ' +
+          'and the user has confirmed. The plugin\'s existing delete-event handler chains: graph ' +
+          'entities are removed via deleteNote, and the local sync index entry is cleaned so the ' +
+          'file doesn\'t haunt cortex_sync_status as a phantom delete. Use to clean up empty stub ' +
+          'notes that Obsidian auto-created from dangling wikilinks, or memory files written ' +
+          'before a frontmatter-merge bug was fixed. Markdown files only.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Vault-relative path to the markdown note to delete.' },
+            permanent: { type: 'boolean', description: 'When true, bypass trash and delete the file irrecoverably. Default false.' },
+          },
+          required: ['path'],
+        },
+        handler: async (args) => {
+          const { path, permanent } = args as { path: string; permanent?: boolean };
+          const node = this.plugin.app.vault.getAbstractFileByPath(path);
+          if (!(node instanceof TFile)) {
+            return { error: `No file at vault path: ${path}` };
+          }
+          if (node.extension !== 'md') {
+            return { error: `Refusing to delete non-markdown file: ${path} (extension: ${node.extension}). Cortex MCP tools work on .md only — touch other file types via the user's normal tooling.` };
+          }
+          try {
+            if (permanent === true) {
+              await this.plugin.app.vault.delete(node);
+              return { deleted: true, path, mode: 'permanent' as const };
+            }
+            // Second arg `true` → OS trash (recoverable via Finder/Explorer);
+            // `false` → Obsidian's own .trash/ folder. OS trash is friendlier
+            // for the "oops, an agent deleted the wrong file" recovery path.
+            await this.plugin.app.vault.trash(node, true);
+            return { deleted: true, path, mode: 'trash' as const };
+          } catch (e) {
+            return { error: `Failed to delete ${path}: ${(e as Error).message}` };
+          }
+        },
+      },
+      {
         name: 'cortex_get_note',
         description:
           'Fetch the full content of a specific note by vault-relative path. Use after a search ' +

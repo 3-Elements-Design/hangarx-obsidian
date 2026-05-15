@@ -1,7 +1,7 @@
 {
   "id": "hangarx",
   "name": "HangarX",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "minAppVersion": "1.8.7",
   "description": "Shared AI memory for your vault. Claude, Cursor, and any MCP agent can query and update your notes through a knowledge graph.",
   "author": "HangarX",
