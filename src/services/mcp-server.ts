@@ -61,12 +61,29 @@ interface ToolDef {
   handler: (args: Record<string, unknown>) => Promise<unknown>;
 }
 
+interface RebuildJob {
+  state: 'running' | 'completed' | 'failed';
+  startedAt: number;
+  finishedAt?: number;
+  communitiesCreated?: number;
+  levels?: number;
+  embeddingsBackfilled?: boolean;
+  communitiesDetected?: boolean;
+  error?: string;
+}
+
 export class McpServer {
   private server: import('http').Server | null = null;
   private port = 7474;
   private token = '';
   private tools: ToolDef[] = [];
   private _bridgePath = '';
+  /** Background rebuild jobs keyed by jobId. cortex_rebuild kicks off work
+   *  and returns immediately so MCP clients don't hit their request timeout
+   *  on big graphs; cortex_rebuild_status polls this map. Memory-only —
+   *  jobs vanish when the MCP server restarts, which is fine because the
+   *  rebuild itself is idempotent. */
+  private rebuildJobs: Map<string, RebuildJob> = new Map();
 
   constructor(
     private plugin: Plugin,
@@ -285,21 +302,42 @@ export class McpServer {
       {
         name: 'cortex_recall',
         description:
-          'Search the user\'s personal knowledge base (Obsidian vault) for facts, decisions, ' +
-          'or context relevant to a query. Use this BEFORE answering questions about the user\'s ' +
-          'projects, preferences, prior decisions, or domain knowledge — the user has stored notes ' +
-          'and your training data alone is not enough. Returns ranked memory items with source provenance.',
+          'Search the user\'s personal knowledge base (Obsidian vault + agent memories) for facts, ' +
+          'decisions, or context relevant to a query. Use this BEFORE answering questions about the ' +
+          'user\'s projects, preferences, prior decisions, or domain knowledge — the user has stored ' +
+          'notes and your training data alone is not enough. Hits BOTH the agent-memory store ' +
+          '(items written via cortex_remember) AND the vault-derived graph (Notes, Concepts, etc.). ' +
+          'Results from each source are tagged so the agent can tell them apart.',
         inputSchema: {
           type: 'object',
           properties: {
             query: { type: 'string', description: 'What to search for, in natural language.' },
-            limit: { type: 'number', description: 'Max items to return (default 5).' },
+            limit: { type: 'number', description: 'Max items per source (default 5 each → up to 10 total).' },
           },
           required: ['query'],
         },
-        handler: (args) => {
+        handler: async (args) => {
           const { query, limit } = args as { query: string; limit?: number };
-          return c.recall(query, limit ?? 5);
+          const cap = limit ?? 5;
+          // Parallelise — the two stores are independent and a slow recall
+          // shouldn't gate the graph result (or vice versa). allSettled so
+          // one outage doesn't drop the other source.
+          const [memoryRes, graphRes] = await Promise.allSettled([
+            c.recall(query, cap),
+            c.searchEntitiesByName(query, cap),
+          ]);
+          const memories = memoryRes.status === 'fulfilled' ? memoryRes.value : [];
+          const entities = graphRes.status === 'fulfilled' ? graphRes.value : [];
+          return {
+            query,
+            memories: memories.map(m => ({ ...m, sourceStore: 'agent_memory' })),
+            entities: entities.map(e => ({ ...e, sourceStore: 'vault_graph' })),
+            counts: { memories: memories.length, entities: entities.length, total: memories.length + entities.length },
+            errors: [
+              memoryRes.status === 'rejected' ? `agent_memory: ${memoryRes.reason?.message ?? memoryRes.reason}` : null,
+              graphRes.status === 'rejected' ? `vault_graph: ${graphRes.reason?.message ?? graphRes.reason}` : null,
+            ].filter((e): e is string => e !== null),
+          };
         },
       },
       {
@@ -619,41 +657,86 @@ export class McpServer {
       {
         name: 'cortex_rebuild',
         description:
-          'Run the post-ingest pipeline that cortex_sync skips when fastMode is used (or when ' +
-          'an ingest is interrupted): backfills entity embeddings into the vector store and ' +
-          're-detects graph communities. Call after cortex_sync when cortex_search_entities ' +
-          'finds content that cortex_recall / cortex_ask miss — the symptom of a stale ' +
-          'embedding index. Idempotent; safe to call repeatedly.',
+          'Kick off the post-ingest pipeline (embedding backfill + community detection) and return ' +
+          'immediately with a jobId. The work runs in the background — call cortex_rebuild_status ' +
+          'with the jobId to poll for completion. Use after cortex_sync when cortex_search_entities ' +
+          'finds content that cortex_recall / cortex_ask miss. Big graphs (5k+ entities) routinely ' +
+          'take 5+ minutes server-side; the synchronous variant blew past the MCP client timeout. ' +
+          'Idempotent — safe to start multiple jobs; each backfills the same data.',
         inputSchema: { type: 'object', properties: {} },
         handler: async () => {
-          // Run sequentially: community detection wants embeddings present.
-          // Don't short-circuit on partial failure — partial success is
-          // strictly more useful than aborting both halves.
-          let embeddingsOk = false;
-          let communitiesOk = false;
-          let communitiesCreated: number | undefined;
-          let levels: number | undefined;
-          const errors: string[] = [];
-          try {
-            await c.backfillEntityEmbeddings();
-            embeddingsOk = true;
-          } catch (e) {
-            errors.push(`backfillEntityEmbeddings: ${(e as Error).message}`);
-          }
-          try {
-            const stats = await c.detectCommunities();
-            communitiesOk = true;
-            communitiesCreated = stats.communitiesCreated;
-            levels = stats.levels;
-          } catch (e) {
-            errors.push(`detectCommunities: ${(e as Error).message}`);
+          const jobId = crypto.randomUUID();
+          this.rebuildJobs.set(jobId, { state: 'running', startedAt: Date.now() });
+          // Detached IIFE — the handler returns immediately, this Promise
+          // keeps running until both API calls resolve or one throws. Errors
+          // get captured into the job state rather than escaping (no one
+          // would see them — the caller is long gone by then).
+          void (async () => {
+            const job = this.rebuildJobs.get(jobId);
+            if (!job) return;  // shouldn't happen, but defensive
+            try {
+              await c.backfillEntityEmbeddings();
+              job.embeddingsBackfilled = true;
+            } catch (e) {
+              job.embeddingsBackfilled = false;
+              job.error = `backfillEntityEmbeddings: ${(e as Error).message}`;
+            }
+            try {
+              const stats = await c.detectCommunities();
+              job.communitiesDetected = true;
+              job.communitiesCreated = stats.communitiesCreated;
+              job.levels = stats.levels;
+            } catch (e) {
+              job.communitiesDetected = false;
+              // Don't clobber an embedding error if both fail; concat instead.
+              const tail = `detectCommunities: ${(e as Error).message}`;
+              job.error = job.error ? `${job.error}; ${tail}` : tail;
+            }
+            job.state = (job.embeddingsBackfilled && job.communitiesDetected) ? 'completed'
+              : (!job.embeddingsBackfilled && !job.communitiesDetected) ? 'failed'
+              : 'completed';  // partial success counts as completed; consumer can inspect flags
+            job.finishedAt = Date.now();
+          })();
+          return {
+            jobId,
+            state: 'running' as const,
+            message: 'Rebuild started in background. Poll cortex_rebuild_status with this jobId — expect 1–10 min depending on graph size.',
+          };
+        },
+      },
+      {
+        name: 'cortex_rebuild_status',
+        description:
+          'Poll the status of a cortex_rebuild job. Returns { state: "running" | "completed" | "failed", ' +
+          'elapsedMs, embeddingsBackfilled, communitiesDetected, communitiesCreated, levels, error }. ' +
+          'Job state is in-memory on the plugin\'s MCP server; restarting Obsidian forgets all jobs ' +
+          '(but the rebuild itself is idempotent — just call cortex_rebuild again).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            jobId: { type: 'string', description: 'The jobId returned by cortex_rebuild.' },
+          },
+          required: ['jobId'],
+        },
+        handler: async (args) => {
+          const { jobId } = args as { jobId: string };
+          const job = this.rebuildJobs.get(jobId);
+          if (!job) {
+            return {
+              error: `Unknown jobId: ${jobId}. Either the job never existed or the MCP server restarted (in-memory state). Re-call cortex_rebuild to start a fresh job.`,
+            };
           }
           return {
-            embeddingsBackfilled: embeddingsOk,
-            communitiesDetected: communitiesOk,
-            communitiesCreated,
-            levels,
-            errors: errors.length > 0 ? errors : undefined,
+            jobId,
+            state: job.state,
+            startedAt: job.startedAt,
+            finishedAt: job.finishedAt,
+            elapsedMs: (job.finishedAt ?? Date.now()) - job.startedAt,
+            embeddingsBackfilled: job.embeddingsBackfilled,
+            communitiesDetected: job.communitiesDetected,
+            communitiesCreated: job.communitiesCreated,
+            levels: job.levels,
+            error: job.error,
           };
         },
       },
