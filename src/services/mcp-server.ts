@@ -1,4 +1,4 @@
-import { Notice, Plugin, FileSystemAdapter, TFile } from 'obsidian';
+import { Notice, Plugin, FileSystemAdapter, TFile, TFolder } from 'obsidian';
 import type { CortexClient } from '../cortex-client';
 import type { CortexSettings } from '../settings';
 import type CortexPlugin from '../main';
@@ -532,6 +532,172 @@ export class McpServer {
         handler: async (args) => {
           const { url, title } = args as { url: string; title?: string };
           return c.ingestUrl(url, title);
+        },
+      },
+      // ── Sync (push vault changes into the graph) ──
+      {
+        name: 'cortex_sync',
+        description:
+          'Trigger an ingest pass over the user\'s vault. Without `path`, runs a full vault sync ' +
+          '(may take minutes on first run; incremental thereafter). With `path` set to a file or ' +
+          'folder, only that scope is synced. Use when cortex_recall / cortex_search_entities ' +
+          'misses content the user says exists on disk — the file is likely just unindexed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Optional vault-relative path. File → just that file. Folder → all markdown under it. Omit → full vault.' },
+            fastMode: { type: 'boolean', description: 'Skip post-ingest VDB indexing + community detection for speed. Caller should run "Rebuild communities + reindex" afterwards if used.' },
+          },
+        },
+        handler: async (args) => {
+          const { path, fastMode } = args as { path?: string; fastMode?: boolean };
+          const sync = (this.plugin as CortexPlugin).sync;
+          if (!path) {
+            return sync.fullSync({ fastMode });
+          }
+          const node = this.plugin.app.vault.getAbstractFileByPath(path);
+          if (!node) return { error: `No file or folder at vault path: ${path}` };
+          const targets: TFile[] = node instanceof TFolder
+            ? this.plugin.app.vault.getMarkdownFiles().filter(f => f.path.startsWith(node.path + '/') || f.path === node.path)
+            : node instanceof TFile && node.extension === 'md'
+              ? [node]
+              : [];
+          if (targets.length === 0) return { error: `No markdown files at: ${path}` };
+          let synced = 0, unchanged = 0, skipped = 0, failed = 0;
+          const failedPaths: string[] = [];
+          for (const f of targets) {
+            try {
+              const result = await sync.syncOneFile(f, { fastMode });
+              if (result === 'synced') synced++;
+              else if (result === 'unchanged') unchanged++;
+              else skipped++;
+            } catch (e) {
+              failed++;
+              failedPaths.push(f.path);
+              console.warn('[Cortex MCP] sync failed for', f.path, e);
+            }
+          }
+          return { synced, unchanged, skipped, failed, failedPaths, total: targets.length };
+        },
+      },
+      {
+        name: 'cortex_sync_status',
+        description:
+          'Diagnostic: how out-of-date is the graph relative to the vault on disk? Returns counts ' +
+          'of files added/changed/deleted since the last sync, total markdown count, and the ' +
+          'most recent file-sync timestamp. Use to decide whether to call cortex_sync.',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => {
+          const sync = (this.plugin as CortexPlugin).sync;
+          const status = await sync.getChangesSinceLastSync();
+          return {
+            ...status,
+            syncRecommended: status.added > 0 || status.changed > 0 || status.deleted > 0,
+            lastSyncedAtIso: status.lastSyncedAt ? new Date(status.lastSyncedAt).toISOString() : null,
+          };
+        },
+      },
+      // ── Workspace awareness (what is the user looking at) ──
+      {
+        name: 'cortex_active_note',
+        description:
+          'Return the markdown note the user currently has open in Obsidian. Use this whenever ' +
+          'the user says "this note", "this file", or asks a question without naming a specific ' +
+          'note — they almost always mean whatever\'s focused. Returns null if no markdown file ' +
+          'is active (canvas, image, etc.).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            maxChars: { type: 'number', description: 'Truncate content past this many characters (default 8000).' },
+          },
+        },
+        handler: async (args) => {
+          const { maxChars = 8000 } = args as { maxChars?: number };
+          const file = this.plugin.app.workspace.getActiveFile();
+          if (!file || file.extension !== 'md') return { active: null };
+          const content = await this.plugin.app.vault.cachedRead(file);
+          const truncated = content.length > maxChars ? content.slice(0, maxChars) + '\n…(truncated)' : content;
+          const cache = this.plugin.app.metadataCache.getFileCache(file);
+          return {
+            active: {
+              path: file.path,
+              basename: file.basename,
+              content: truncated,
+              modifiedAt: file.stat.mtime,
+              frontmatter: cache?.frontmatter ?? null,
+            },
+          };
+        },
+      },
+      {
+        name: 'cortex_recent_notes',
+        description:
+          'List the user\'s most recently modified markdown notes. Use to understand what they\'ve ' +
+          'been working on, find a note they referenced without naming, or surface "recently touched" ' +
+          'context for an answer.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: 'Max notes to return (default 10, max 50).' },
+          },
+        },
+        handler: async (args) => {
+          const { limit = 10 } = args as { limit?: number };
+          const cap = Math.min(Math.max(1, limit), 50);
+          const files = this.plugin.app.vault.getMarkdownFiles()
+            .slice()
+            .sort((a, b) => b.stat.mtime - a.stat.mtime)
+            .slice(0, cap);
+          return {
+            notes: files.map(f => ({
+              path: f.path,
+              basename: f.basename,
+              modifiedAt: f.stat.mtime,
+              modifiedAtIso: new Date(f.stat.mtime).toISOString(),
+            })),
+          };
+        },
+      },
+      {
+        name: 'cortex_get_note',
+        description:
+          'Fetch the full content of a specific note by vault-relative path. Use after a search ' +
+          'tool (cortex_search_entities, cortex_related, cortex_recall) returns a path and you ' +
+          'need to read the full note rather than a snippet.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Vault-relative path to the markdown note.' },
+            maxChars: { type: 'number', description: 'Truncate content past this many characters (default 16000).' },
+          },
+          required: ['path'],
+        },
+        handler: async (args) => {
+          const { path, maxChars = 16000 } = args as { path: string; maxChars?: number };
+          const node = this.plugin.app.vault.getAbstractFileByPath(path);
+          if (!(node instanceof TFile) || node.extension !== 'md') {
+            return { error: `No markdown note at vault path: ${path}` };
+          }
+          const content = await this.plugin.app.vault.cachedRead(node);
+          const truncated = content.length > maxChars ? content.slice(0, maxChars) + '\n…(truncated)' : content;
+          const cache = this.plugin.app.metadataCache.getFileCache(node);
+          const links = cache?.links?.map(l => l.link) ?? [];
+          // Backlinks aren't on the per-file cache — pull from the resolved
+          // map. Cheap because the cache is already in memory.
+          const resolved = this.plugin.app.metadataCache.resolvedLinks ?? {};
+          const backlinks: string[] = [];
+          for (const [from, targets] of Object.entries(resolved)) {
+            if ((targets as Record<string, number>)[path] && from !== path) backlinks.push(from);
+          }
+          return {
+            path: node.path,
+            basename: node.basename,
+            content: truncated,
+            modifiedAt: node.stat.mtime,
+            frontmatter: cache?.frontmatter ?? null,
+            links,
+            backlinks,
+          };
         },
       },
     ];
