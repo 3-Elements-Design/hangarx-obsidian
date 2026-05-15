@@ -125,6 +125,7 @@ export class VaultSync {
   }> {
     await this.loadIndex();
     const all = this.app.vault.getMarkdownFiles();
+    const allByPath = new Set(all.map(f => f.path));
     const eligible = all.filter(f => !this.isExcluded(f.path));
 
     const known = this.index.files;
@@ -132,7 +133,6 @@ export class VaultSync {
 
     let changed = 0;
     let added = 0;
-    let lastSyncedAt: number | null = null;
 
     for (const f of eligible) {
       seen.add(f.path);
@@ -147,14 +147,32 @@ export class VaultSync {
       if (f.stat.mtime > state.hashedAt) {
         changed++;
       }
+    }
+
+    // Deleted = files in the index that no longer exist on disk AND are
+    // still eligible by today's filter rules. Without the second clause,
+    // index entries from before a folder was excluded (e.g. user enabled
+    // chatExportFolder later, or moved a folder under excludePatterns)
+    // accumulate forever — fullSync's delete pass filters by isExcluded
+    // and refuses to clean them up, so sync_status would otherwise report
+    // a phantom growing `deleted` counter that no sync call can resolve.
+    let deleted = 0;
+    for (const path of Object.keys(known)) {
+      if (allByPath.has(path)) continue;          // still on disk
+      if (this.isExcluded(path)) continue;        // would never be re-synced anyway
+      deleted++;
+    }
+
+    // lastSyncedAt was historically scoped to eligible files only, which
+    // meant syncing Cortex Memories/ or Cortex Chats/ via syncOneFile
+    // updated their hashedAt but never advanced the reported watermark.
+    // Compute over the whole index so "when was anything last touched"
+    // matches what's actually in the index.
+    let lastSyncedAt: number | null = null;
+    for (const state of Object.values(known)) {
       if (state.hashedAt && (!lastSyncedAt || state.hashedAt > lastSyncedAt)) {
         lastSyncedAt = state.hashedAt;
       }
-    }
-
-    let deleted = 0;
-    for (const path of Object.keys(known)) {
-      if (!seen.has(path)) deleted++;
     }
 
     return { changed, added, deleted, total: eligible.length, lastSyncedAt };
@@ -215,6 +233,25 @@ export class VaultSync {
     const total = files.length;
     const onProgress = opts?.onProgress;
     const signal = opts?.signal;
+
+    // Garbage-collect stale index entries for paths that are currently
+    // excluded (folder moved under excludePatterns, chat/memory folder
+    // renamed, etc.). The delete pass below filters by isExcluded so it
+    // would never touch these — meaning they'd accumulate in the index
+    // forever and surface in cortex_sync_status as a phantom growing
+    // `deleted` counter. Cheap to do once per full sync.
+    let prunedStale = 0;
+    for (const p of Object.keys(this.index.files)) {
+      if (this.isExcluded(p)) {
+        delete this.index.files[p];
+        delete this.index.hashes[p];
+        delete this.index.attachments[p];
+        prunedStale++;
+      }
+    }
+    if (prunedStale > 0) {
+      console.info(`[Cortex] Pruned ${prunedStale} stale index entries for excluded paths.`);
+    }
 
     // Per-session cancellation token. Sent on every ingest call as
     // x-sync-job-id; the abort handler below POSTs to /v1/ingest/jobs/<id>

@@ -332,6 +332,8 @@ Pick any in **Settings → HangarX → LLM provider keys** (BYOK) or in the per-
 | Revocable | ✓ ([dashboard](https://app.hangarx.ai/settings?tab=api-keys)) | ✓ (delete the container) |
 
 **Excluded by default**: `.cortex/`, `templates/`, plus your vault's config folder (whatever `Vault#configDir` resolves to — usually `.obsidian/`). Configurable in **What to sync**.
+
+**Always excluded** (not configurable via UI): the three folders the plugin writes into itself — `Cortex Chats/`, `Cortex Memories/`, and `Cortex Graph/`. Re-ingesting these would create a feedback loop: chat answers become graph nodes, future retrievals surface those answers, future answers cite them, and the graph gradually fills with model output rather than user-authored content. To override, rename the export folder in Settings → Interface → "Chat export folder" / "Memory folder" — anything stored at the renamed path *will* be synced.
 **Attachments**: images, PDFs, and other binaries are ingested by default. Toggle off in **Sync attachments**.
 
 **Background network activity**: while the **Ask your vault** panel or **Knowledge graph stats** modal is open, the plugin polls the configured API's `/health` endpoint every 30 seconds to keep the connection-status pill accurate. The poll sends no vault data — just a bare GET — and stops when the panel/modal closes. Vault syncs are change-driven (triggered by edits/saves), not on a periodic timer.
