@@ -600,7 +600,61 @@ export class McpServer {
               /* stats fetch failed — don't compound a sync issue with a stats issue */
             }
           }
-          return { ...result, serverGraphEmpty, hint };
+          // Post-ingest pipeline hint: per-file ingest covers entity
+          // extraction + graph writes, but embedding backfill + community
+          // detection are batch-level steps. fastMode skips them entirely
+          // and force-resyncs benefit from re-running them once the new
+          // entities are in place. Without these, cortex_recall + cortex_ask
+          // (which depend on vector retrieval) miss freshly-ingested content
+          // even though cortex_search_entities finds it. Surface the hint so
+          // agents know to follow up with cortex_rebuild.
+          const postIngestRecommended = force === true || fastMode === true;
+          const finalHint = hint
+            ?? (postIngestRecommended
+              ? 'Embeddings and community detection may be stale after this sync. Call cortex_rebuild to refresh both — cortex_recall / cortex_ask need them to find freshly-ingested content.'
+              : undefined);
+          return { ...result, serverGraphEmpty, postIngestRecommended, hint: finalHint };
+        },
+      },
+      {
+        name: 'cortex_rebuild',
+        description:
+          'Run the post-ingest pipeline that cortex_sync skips when fastMode is used (or when ' +
+          'an ingest is interrupted): backfills entity embeddings into the vector store and ' +
+          're-detects graph communities. Call after cortex_sync when cortex_search_entities ' +
+          'finds content that cortex_recall / cortex_ask miss — the symptom of a stale ' +
+          'embedding index. Idempotent; safe to call repeatedly.',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => {
+          // Run sequentially: community detection wants embeddings present.
+          // Don't short-circuit on partial failure — partial success is
+          // strictly more useful than aborting both halves.
+          let embeddingsOk = false;
+          let communitiesOk = false;
+          let communitiesCreated: number | undefined;
+          let levels: number | undefined;
+          const errors: string[] = [];
+          try {
+            await c.backfillEntityEmbeddings();
+            embeddingsOk = true;
+          } catch (e) {
+            errors.push(`backfillEntityEmbeddings: ${(e as Error).message}`);
+          }
+          try {
+            const stats = await c.detectCommunities();
+            communitiesOk = true;
+            communitiesCreated = stats.communitiesCreated;
+            levels = stats.levels;
+          } catch (e) {
+            errors.push(`detectCommunities: ${(e as Error).message}`);
+          }
+          return {
+            embeddingsBackfilled: embeddingsOk,
+            communitiesDetected: communitiesOk,
+            communitiesCreated,
+            levels,
+            errors: errors.length > 0 ? errors : undefined,
+          };
         },
       },
       {
