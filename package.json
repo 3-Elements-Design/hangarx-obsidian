@@ -1,6 +1,6 @@
 {
   "name": "hangarx-obsidian",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "private": true,
   "description": "Obsidian plugin for Cortex GraphRAG.",
   "main": "main.js",
