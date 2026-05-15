@@ -3379,7 +3379,7 @@ function keysFieldToRuntimeProvider(keysFieldId: string): string | null {
   }
 }
 
-function buildDockerComposeWithKeys(s: CortexSettings): string {
+export function buildDockerComposeWithKeys(s: CortexSettings): string {
   const base = buildDockerCompose(
     s.connectorEncryptionKey,
     s.llmEncryptionKey,

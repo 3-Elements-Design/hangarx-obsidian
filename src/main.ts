@@ -2,6 +2,7 @@ import { Notice, Plugin, MarkdownView, Modal, App } from 'obsidian';
 import { CortexClient } from './cortex-client';
 import {
   CortexSettings, CortexSettingTab, CLOUD_API_URL, DEFAULT_SETTINGS, defaultDeviceName, generateEncryptionKey,
+  buildDockerComposeWithKeys,
 } from './settings';
 import { VaultSync } from './services/vault-sync';
 import { ConversationStore } from './services/conversation-store';
@@ -444,57 +445,64 @@ export default class CortexPlugin extends Plugin {
   }
 
   /**
-   * Detect plugin upgrades and prompt local-mode users to re-save the
-   * wizard's docker-compose.cortex.yml so the freshly-pinned cortex-api
-   * tag actually gets pulled. The notice fires when:
-   *   - the user is in local mode (cloud users have nothing to pull),
-   *   - a docker-compose.cortex.yml already exists in the vault (no
-   *     point nudging users who haven't set up the local stack at all),
-   *   - and either the stored version differs from manifest.version, OR
-   *     the field is empty but onboardingShownAt is set (existing
-   *     installs predating this field — they only get nudged once).
-   * Updates lastSeenPluginVersion unconditionally so the notice only
-   * fires once per upgrade.
+   * Local-mode drift check. Fires a sticky Notice when the user's on-disk
+   * docker-compose.cortex.yml no longer matches what the plugin would
+   * generate from their current settings — i.e. when re-saving + recreating
+   * the stack would actually do something useful.
+   *
+   * This replaces the older version-bump heuristic, which fired on every
+   * plugin update regardless of whether the Docker stack needed touching.
+   * Pure plugin-side releases (UI tweaks, MCP wiring, etc.) leave the
+   * compose template identical, so the disk YAML matches and no Notice
+   * shows. When the pinned cortex-api image tag changes, or the template
+   * structure changes, or the user's provider keys drift from what's
+   * baked into disk, the bytes differ and the Notice fires with a reason.
+   *
+   * lastSeenPluginVersion is still updated for telemetry/debug visibility
+   * but no longer gates the Notice.
    */
   private async maybeShowUpgradeNotice(): Promise<void> {
     const currentVersion = this.manifest.version;
-    const lastSeen = this.settings.lastSeenPluginVersion;
-    const upgraded = !!lastSeen && lastSeen !== currentVersion;
-    const probablyExisting = !lastSeen && !!this.settings.onboardingShownAt;
-
-    if ((upgraded || probablyExisting) && this.settings.connectionMode === 'local') {
-      const ymlPath = 'docker-compose.cortex.yml';
-      const ymlExists = await this.app.vault.adapter.exists(ymlPath).catch(() => false);
-      if (ymlExists) {
-        const frag = createFragment();
-        const header = createEl('strong', { text: `HangarX updated to v${currentVersion}` });
-        frag.appendChild(header);
-        frag.appendChild(createEl('br'));
-        frag.appendChild(createEl('span', {
-          text: 'Re-save docker-compose.cortex.yml from the setup wizard, then run `docker compose up -d --force-recreate` so the new cortex-api image gets pulled.',
-        }));
-        frag.appendChild(createEl('br'));
-        const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta cortex-upgrade-notice-btn' });
-        btn.addEventListener('click', () => {
-          const settingApi = (this.app as unknown as {
-            setting?: { open?: () => void; openTabById?: (id: string) => void };
-          }).setting;
-          settingApi?.open?.();
-          settingApi?.openTabById?.(this.manifest.id);
-          notice.hide();
-        });
-        frag.appendChild(btn);
-        // Duration 0 → sticky; the user must click the button or the
-        // notice's own dismiss control. We don't want this auto-fading
-        // because the action is required to actually get the new image.
-        const notice = new Notice(frag, 0);
-      }
-    }
-
-    if (lastSeen !== currentVersion) {
+    if (this.settings.lastSeenPluginVersion !== currentVersion) {
       this.settings.lastSeenPluginVersion = currentVersion;
       await this.saveSettings();
     }
+
+    if (this.settings.connectionMode !== 'local') return;
+    const ymlPath = 'docker-compose.cortex.yml';
+    const ymlExists = await this.app.vault.adapter.exists(ymlPath).catch(() => false);
+    if (!ymlExists) return;
+
+    let onDisk: string;
+    try {
+      onDisk = await this.app.vault.adapter.read(ymlPath);
+    } catch { return; }
+    const expected = buildDockerComposeWithKeys(this.settings);
+    if (onDisk === expected) return;  // No drift, no nudge.
+
+    const reason = describeComposeDrift(onDisk, expected);
+    const frag = createFragment();
+    frag.appendChild(createEl('strong', { text: 'HangarX: local stack out of sync' }));
+    frag.appendChild(createEl('br'));
+    frag.appendChild(createEl('span', { text: reason }));
+    frag.appendChild(createEl('br'));
+    frag.appendChild(createEl('span', {
+      text: 'Re-save docker-compose.cortex.yml from the setup wizard, then run `docker compose up -d --force-recreate` to apply.',
+    }));
+    frag.appendChild(createEl('br'));
+    const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta cortex-upgrade-notice-btn' });
+    btn.addEventListener('click', () => {
+      const settingApi = (this.app as unknown as {
+        setting?: { open?: () => void; openTabById?: (id: string) => void };
+      }).setting;
+      settingApi?.open?.();
+      settingApi?.openTabById?.(this.manifest.id);
+      notice.hide();
+    });
+    frag.appendChild(btn);
+    // Duration 0 → sticky; only dismissed by the button or the Notice's own
+    // close control. The action is required to bring the stack in sync.
+    const notice = new Notice(frag, 0);
   }
 
   /**
@@ -844,6 +852,27 @@ export default class CortexPlugin extends Plugin {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + '…';
+}
+
+/**
+ * Compare a pair of docker-compose.cortex.yml strings and return a short
+ * user-facing reason for the drift. The check is intentionally narrow:
+ * the cortex-api image tag is the field most likely to change between
+ * releases (rewritten by release-obsidian-plugin.sh from
+ * packages/cortex-api/package.json), so call it out specifically when
+ * we can. Everything else falls back to a generic message.
+ */
+function describeComposeDrift(onDisk: string, expected: string): string {
+  const tagRe = /hangarx\/cortex-api:([\w.\-+]+)/;
+  const onDiskTag = onDisk.match(tagRe)?.[1];
+  const expectedTag = expected.match(tagRe)?.[1];
+  if (onDiskTag && expectedTag && onDiskTag !== expectedTag) {
+    return `A new cortex-api image (${expectedTag}) is pinned in this release — your stack is still on ${onDiskTag}.`;
+  }
+  // Same image tag, different bytes → either compose template structure
+  // changed (env vars, ports, etc.) or the user's saved provider keys
+  // diverged from what's baked into the on-disk YAML.
+  return 'The compose template or your provider keys have changed since this file was last saved.';
 }
 
 // MarkdownView import retained for future commands; suppress unused warning.
