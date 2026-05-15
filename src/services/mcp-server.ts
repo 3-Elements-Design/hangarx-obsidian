@@ -1,6 +1,7 @@
-import { Notice, Plugin, FileSystemAdapter } from 'obsidian';
+import { Notice, Plugin, FileSystemAdapter, TFile } from 'obsidian';
 import type { CortexClient } from '../cortex-client';
 import type { CortexSettings } from '../settings';
+import type CortexPlugin from '../main';
 import { writeMemoryNote } from './vault-writer';
 
 /**
@@ -321,10 +322,17 @@ export class McpServer {
         },
         handler: async (args) => {
           const { content, title, category, tags } = args as { content: string; title?: string; category?: string; tags?: string[] };
-          // Store in Cortex API memory
+          // Persistence path A — memory_items (queryable via cortex_recall).
           await c.remember(content);
-          // Write to vault as a note if enabled
+          // Persistence path B — vault note (queryable via cortex_search_entities,
+          // cortex_related, cortex_paths, the chat panel's hybrid search, etc.)
+          // ONLY if the user has writeMemoriesToVault enabled. Without the sync
+          // call below, a written note exists on disk but doesn't appear in any
+          // graph/entity retrieval path until the next vault-wide sync — Claude
+          // and other agents see the recall miss and conclude the memory was
+          // lost. Pushing the new note through syncOneFile closes that gap.
           let notePath: string | undefined;
+          let ingested = false;
           if (this.settings.writeMemoriesToVault) {
             try {
               notePath = await writeMemoryNote(this.plugin.app, this.settings.memoryFolder, {
@@ -337,8 +345,23 @@ export class McpServer {
             } catch (e) {
               console.warn('[Cortex MCP] Failed to write memory note:', e);
             }
+            // Best-effort ingest. Failures here MUST NOT roll the response back
+            // to an error — the memory_items write already succeeded, the file
+            // is on disk, and the next full sync will pick it up. We just lose
+            // the immediate-retrieval property.
+            if (notePath) {
+              try {
+                const file = this.plugin.app.vault.getAbstractFileByPath(notePath);
+                if (file instanceof TFile) {
+                  const result = await (this.plugin as CortexPlugin).sync.syncOneFile(file);
+                  ingested = result === 'synced';
+                }
+              } catch (e) {
+                console.warn('[Cortex MCP] Failed to ingest new memory note (will be picked up on next full sync):', e);
+              }
+            }
           }
-          return { ok: true, notePath };
+          return { ok: true, notePath, ingested };
         },
       },
       // ── Graph navigation (multi-hop reasoning over the user's notes) ──

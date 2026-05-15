@@ -5155,3 +5155,10 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
   margin: 0;
   overflow-x: auto;
 }
+
+/* Post-upgrade Notice CTA — sits below the upgrade copy with a small gap
+   so the button doesn't collide with the preceding <br>. Replaces an
+   inline btn.style.marginTop the Obsidian reviewer flagged. */
+.cortex-upgrade-notice-btn {
+  margin-top: 8px;
+}

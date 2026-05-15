@@ -466,8 +466,7 @@ export default class CortexPlugin extends Plugin {
           text: 'Re-save docker-compose.cortex.yml from the setup wizard, then run `docker compose up -d --force-recreate` so the new cortex-api image gets pulled.',
         }));
         frag.appendChild(createEl('br'));
-        const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta' });
-        btn.style.marginTop = '8px';
+        const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta cortex-upgrade-notice-btn' });
         btn.addEventListener('click', () => {
           const settingApi = (this.app as unknown as {
             setting?: { open?: () => void; openTabById?: (id: string) => void };
