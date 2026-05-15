@@ -32,6 +32,13 @@ interface AgentHarness {
 export const CLOUD_API_URL = 'https://cortex.hangarx.ai';
 const LOCAL_API_URL = 'http://localhost:3400';
 
+// Pinned cortex-api Docker Hub tag the wizard writes into docker-compose.cortex.yml.
+// Bumped automatically by scripts/release-obsidian-plugin.sh from packages/cortex-api/package.json
+// so every plugin release ships against a known-good server image instead of a
+// drifting :latest. The CORTEX_IMAGE env var still overrides for power users.
+// keep-in-sync: docker-compose.local.yml, scripts/release-obsidian-plugin.sh
+export const CORTEX_API_VERSION = '1.0.1';
+
 export type EmbeddingPreset = 'gemini' | 'ollama';
 
 interface EmbeddingPresetConfig {
@@ -105,7 +112,7 @@ services:
       timeout: 5s
       retries: 10
   cortex-api:
-    image: \${CORTEX_IMAGE:-hangarx/cortex-api:latest}
+    image: \${CORTEX_IMAGE:-hangarx/cortex-api:${CORTEX_API_VERSION}}
     container_name: cortex-api
     restart: unless-stopped
     ports:
