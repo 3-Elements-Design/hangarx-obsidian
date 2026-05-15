@@ -5158,7 +5158,30 @@ details.cortex-agent-row-generic[open] > summary::before { content: '▾'; }
 
 /* Post-upgrade Notice CTA — sits below the upgrade copy with a small gap
    so the button doesn't collide with the preceding <br>. Replaces an
-   inline btn.style.marginTop the Obsidian reviewer flagged. */
+   inline btn.style.marginTop the Obsidian reviewer flagged. Margin-right
+   so two stacked CTAs (Save & copy command, Save & copy LLM prompt) don't
+   collide horizontally. */
 .cortex-upgrade-notice-btn {
   margin-top: 8px;
+  margin-right: 6px;
+}
+
+/* Drift card — top-of-section warning when the on-disk
+   docker-compose.cortex.yml is out of sync with what the plugin would
+   generate. Same shape as .cortex-success-card but tinted warning amber
+   so the visual semantics flip from "we're good" to "action required". */
+.cortex-local-drift-wrap {
+  /* purely a positioning wrapper so renderLocalConnection can toggle
+     visibility before the async drift check completes */
+}
+.cortex-local-drift-card {
+  margin: 8px 0 16px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--text-warning, #d29200);
+  background: rgba(210, 146, 0, 0.08);
+  border-radius: 4px;
+  color: var(--text-normal);
+}
+.cortex-local-drift-card .cortex-local-hero-step-actions {
+  margin-top: 10px;
 }

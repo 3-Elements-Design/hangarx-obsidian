@@ -176,14 +176,14 @@ export function generateEncryptionKey(): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const DOCKER_START_CMD = `docker compose -f docker-compose.cortex.yml up -d --force-recreate`;
+export const DOCKER_START_CMD = `docker compose -f docker-compose.cortex.yml up -d --force-recreate`;
 
 // Setup prompt for agentic coding assistants (Claude Code, Cursor, Cline, etc.).
 // Paired with the "Copy LLM setup prompt" button in step 3 of the local setup
 // wizard so users can hand the terminal side of install to an LLM instead of
 // pasting commands themselves. Mirrored in apps/hangarx-obsidian/README.md
 // under "Hand step 4 to Claude Code" — keep the two in sync when editing.
-const LLM_SETUP_PROMPT = `You're helping me bring up the HangarX local stack for the Obsidian plugin
+export const LLM_SETUP_PROMPT = `You're helping me bring up the HangarX local stack for the Obsidian plugin
 (https://community.obsidian.md/plugins/hangarx). Be terse — one update
 per phase, no narration.
 
@@ -431,6 +431,56 @@ export function defaultDeviceName(): string {
   if (Platform.isWin) return 'Windows';
   if (Platform.isLinux) return 'Linux';
   return 'Desktop';
+}
+
+/** Path the wizard writes the generated compose file to. Shared so callers
+ *  can refer to it without re-hardcoding the literal string. */
+export const COMPOSE_YML_PATH = 'docker-compose.cortex.yml';
+
+/**
+ * Compare a pair of docker-compose.cortex.yml strings and return a short
+ * user-facing reason for the drift. The check is intentionally narrow:
+ * the cortex-api image tag is the field most likely to change between
+ * releases (rewritten by release-obsidian-plugin.sh from
+ * packages/cortex-api/package.json), so call it out specifically when
+ * we can. Everything else falls back to a generic message.
+ */
+export function describeComposeDrift(onDisk: string, expected: string): string {
+  const tagRe = /hangarx\/cortex-api:([\w.\-+]+)/;
+  const onDiskTag = onDisk.match(tagRe)?.[1];
+  const expectedTag = expected.match(tagRe)?.[1];
+  if (onDiskTag && expectedTag && onDiskTag !== expectedTag) {
+    return `A new cortex-api image (${expectedTag}) is pinned in this release — your stack is still on ${onDiskTag}.`;
+  }
+  // Same image tag, different bytes → either compose template structure
+  // changed (env vars, ports, etc.) or the user's saved provider keys
+  // diverged from what's baked into the on-disk YAML.
+  return 'The compose template or your provider keys have changed since this file was last saved.';
+}
+
+/**
+ * Reads the on-disk docker-compose.cortex.yml (if any) and compares it
+ * against what the plugin would generate from current settings. Returns
+ * `null` when there's no drift (or no file to compare against); otherwise
+ * the expected YAML + a human-readable reason. Callers use the returned
+ * `expected` directly when the user clicks "Save & ...", so they don't
+ * have to regenerate it.
+ */
+export async function checkComposeDrift(
+  app: App,
+  settings: CortexSettings,
+): Promise<{ expected: string; reason: string } | null> {
+  const exists = await app.vault.adapter.exists(COMPOSE_YML_PATH).catch(() => false);
+  if (!exists) return null;
+  let onDisk: string;
+  try {
+    onDisk = await app.vault.adapter.read(COMPOSE_YML_PATH);
+  } catch {
+    return null;
+  }
+  const expected = buildDockerComposeWithKeys(settings);
+  if (onDisk === expected) return null;
+  return { expected, reason: describeComposeDrift(onDisk, expected) };
 }
 
 export class CortexSettingTab extends PluginSettingTab {
@@ -1095,6 +1145,13 @@ export class CortexSettingTab extends PluginSettingTab {
       attr: { 'aria-label': 'Retry connection check' },
     });
 
+    // Drift card — top-of-section nudge that fires when the on-disk
+    // docker-compose.cortex.yml no longer matches what the plugin would
+    // generate now. Replaces the "buried in Diagnostics & overrides" path
+    // for the re-save scenario. Filled async; stays hidden if no drift.
+    const driftWrap = containerEl.createDiv({ cls: 'cortex-local-drift-wrap is-hidden' });
+    void this.renderDriftCard(driftWrap, s);
+
     // Stack health + recovery — re-rendered after every probe. Mounted into
     // a stable wrapper div so runCheck() can swap its contents without
     // disturbing the cards above/below.
@@ -1277,6 +1334,63 @@ export class CortexSettingTab extends PluginSettingTab {
     })(); });
 
     return hero;
+  }
+
+  /**
+   * Drift card — surfaces a re-save CTA at the top of the Local connection
+   * section when the on-disk docker-compose.cortex.yml diverges from what
+   * the plugin would generate from current settings. Replaces the
+   * "buried in Diagnostics & overrides" discovery path for the upgrade /
+   * keys-changed scenarios. Hidden by default; revealed after the async
+   * drift check completes and finds a delta.
+   *
+   * Three buttons cover the realistic exit paths:
+   *   - Save to vault (writes the YAML; drift card hides on success)
+   *   - Copy docker command (recreate command for terminal users)
+   *   - Copy LLM setup prompt (hand-off to Claude Code / Cursor / Cline)
+   */
+  private async renderDriftCard(wrap: HTMLElement, s: CortexSettings): Promise<void> {
+    const drift = await checkComposeDrift(this.plugin.app, s);
+    if (!drift) return;  // stays hidden
+    wrap.removeClass('is-hidden');
+    wrap.empty();
+
+    const card = wrap.createDiv({ cls: 'cortex-local-drift-card' });
+    card.createDiv({ text: '⚠ Local stack out of sync', cls: 'cortex-settings-card-title' });
+    card.createDiv({
+      cls: 'cortex-settings-card-body',
+      text: drift.reason,
+    });
+    card.createDiv({
+      cls: 'cortex-settings-card-footnote',
+      text: 'Save the updated YAML, then run the recreate command (or hand the docker step to an LLM agent).',
+    });
+
+    const actions = card.createDiv({ cls: 'cortex-local-hero-step-actions' });
+    const saveBtn = actions.createEl('button', { text: 'Save to vault', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => { void (async () => {
+      try {
+        await this.plugin.app.vault.adapter.write(COMPOSE_YML_PATH, drift.expected);
+        saveBtn.setText('✓ saved');
+        // Hide the card on success — drift is resolved until the next change.
+        window.setTimeout(() => { wrap.addClass('is-hidden'); }, 1200);
+      } catch (e) {
+        saveBtn.setText('Failed — check console');
+        console.error('[Cortex] Failed to write compose file:', e);
+      }
+    })(); });
+    const copyCmdBtn = actions.createEl('button', { text: 'Copy docker command' });
+    copyCmdBtn.addEventListener('click', () => { void (async () => {
+      await navigator.clipboard.writeText(DOCKER_START_CMD);
+      copyCmdBtn.setText('✓ copied');
+      window.setTimeout(() => copyCmdBtn.setText('Copy docker command'), 1800);
+    })(); });
+    const copyPromptBtn = actions.createEl('button', { text: 'Copy LLM setup prompt' });
+    copyPromptBtn.addEventListener('click', () => { void (async () => {
+      await navigator.clipboard.writeText(LLM_SETUP_PROMPT);
+      copyPromptBtn.setText('✓ copied');
+      window.setTimeout(() => copyPromptBtn.setText('Copy LLM setup prompt'), 1800);
+    })(); });
   }
 
   /**

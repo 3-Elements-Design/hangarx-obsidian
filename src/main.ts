@@ -2,7 +2,7 @@ import { Notice, Plugin, MarkdownView, Modal, App } from 'obsidian';
 import { CortexClient } from './cortex-client';
 import {
   CortexSettings, CortexSettingTab, CLOUD_API_URL, DEFAULT_SETTINGS, defaultDeviceName, generateEncryptionKey,
-  buildDockerComposeWithKeys,
+  COMPOSE_YML_PATH, DOCKER_START_CMD, LLM_SETUP_PROMPT, checkComposeDrift,
 } from './settings';
 import { VaultSync } from './services/vault-sync';
 import { ConversationStore } from './services/conversation-store';
@@ -469,37 +469,42 @@ export default class CortexPlugin extends Plugin {
     }
 
     if (this.settings.connectionMode !== 'local') return;
-    const ymlPath = 'docker-compose.cortex.yml';
-    const ymlExists = await this.app.vault.adapter.exists(ymlPath).catch(() => false);
-    if (!ymlExists) return;
+    const drift = await checkComposeDrift(this.app, this.settings);
+    if (!drift) return;  // No drift, no nudge.
 
-    let onDisk: string;
-    try {
-      onDisk = await this.app.vault.adapter.read(ymlPath);
-    } catch { return; }
-    const expected = buildDockerComposeWithKeys(this.settings);
-    if (onDisk === expected) return;  // No drift, no nudge.
+    // Pre-computed action used by both buttons: writes the fresh YAML to
+    // disk, copies the supplied text to clipboard, hides the Notice, and
+    // confirms via a transient success Notice.
+    const saveAndCopy = async (toCopy: string, confirmation: string): Promise<void> => {
+      try {
+        await this.app.vault.adapter.write(COMPOSE_YML_PATH, drift.expected);
+        await navigator.clipboard.writeText(toCopy);
+        notice.hide();
+        new Notice(confirmation, 4000);
+      } catch (e) {
+        new Notice(`HangarX: save failed — ${(e as Error).message}`, 6000);
+      }
+    };
 
-    const reason = describeComposeDrift(onDisk, expected);
     const frag = createFragment();
     frag.appendChild(createEl('strong', { text: 'HangarX: local stack out of sync' }));
     frag.appendChild(createEl('br'));
-    frag.appendChild(createEl('span', { text: reason }));
+    frag.appendChild(createEl('span', { text: drift.reason }));
     frag.appendChild(createEl('br'));
     frag.appendChild(createEl('span', {
-      text: 'Re-save docker-compose.cortex.yml from the setup wizard, then run `docker compose up -d --force-recreate` to apply.',
+      text: 'One click below saves the updated YAML and copies what you need next:',
     }));
     frag.appendChild(createEl('br'));
-    const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta cortex-upgrade-notice-btn' });
-    btn.addEventListener('click', () => {
-      const settingApi = (this.app as unknown as {
-        setting?: { open?: () => void; openTabById?: (id: string) => void };
-      }).setting;
-      settingApi?.open?.();
-      settingApi?.openTabById?.(this.manifest.id);
-      notice.hide();
+    const saveCmdBtn = createEl('button', { text: 'Save & copy docker command', cls: 'mod-cta cortex-upgrade-notice-btn' });
+    saveCmdBtn.addEventListener('click', () => {
+      void saveAndCopy(DOCKER_START_CMD, 'YAML saved. Recreate command copied — paste into a terminal in your vault folder.');
     });
-    frag.appendChild(btn);
+    frag.appendChild(saveCmdBtn);
+    const savePromptBtn = createEl('button', { text: 'Save & copy LLM prompt', cls: 'cortex-upgrade-notice-btn' });
+    savePromptBtn.addEventListener('click', () => {
+      void saveAndCopy(LLM_SETUP_PROMPT, 'YAML saved. LLM prompt copied — paste into Claude Code / Cursor / Cline.');
+    });
+    frag.appendChild(savePromptBtn);
     // Duration 0 → sticky; only dismissed by the button or the Notice's own
     // close control. The action is required to bring the stack in sync.
     const notice = new Notice(frag, 0);
@@ -852,27 +857,6 @@ export default class CortexPlugin extends Plugin {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + '…';
-}
-
-/**
- * Compare a pair of docker-compose.cortex.yml strings and return a short
- * user-facing reason for the drift. The check is intentionally narrow:
- * the cortex-api image tag is the field most likely to change between
- * releases (rewritten by release-obsidian-plugin.sh from
- * packages/cortex-api/package.json), so call it out specifically when
- * we can. Everything else falls back to a generic message.
- */
-function describeComposeDrift(onDisk: string, expected: string): string {
-  const tagRe = /hangarx\/cortex-api:([\w.\-+]+)/;
-  const onDiskTag = onDisk.match(tagRe)?.[1];
-  const expectedTag = expected.match(tagRe)?.[1];
-  if (onDiskTag && expectedTag && onDiskTag !== expectedTag) {
-    return `A new cortex-api image (${expectedTag}) is pinned in this release — your stack is still on ${onDiskTag}.`;
-  }
-  // Same image tag, different bytes → either compose template structure
-  // changed (env vars, ports, etc.) or the user's saved provider keys
-  // diverged from what's baked into the on-disk YAML.
-  return 'The compose template or your provider keys have changed since this file was last saved.';
 }
 
 // MarkdownView import retained for future commands; suppress unused warning.
