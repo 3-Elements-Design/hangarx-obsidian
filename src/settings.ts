@@ -400,7 +400,13 @@ export const DEFAULT_SETTINGS: CortexSettings = {
   chatAgentWebSearch: false,
   chatAgentSkill: 'obsidian-chat',
   chatStream: true,
-  mcpEnabled: false,
+  // Enabled by default — the local MCP server is the whole point of the
+  // plugin's "shared memory across agents" pitch. It only binds to 127.0.0.1
+  // and requires a bearer token (auto-generated on first start), so the
+  // default-on posture has no network exposure cost. Existing installs that
+  // explicitly toggled it off keep their saved preference (DEFAULT_SETTINGS
+  // only applies when the field is missing from data.json).
+  mcpEnabled: true,
   mcpPort: 7474,
   mcpToken: '',
   chatExportFolder: 'Cortex Chats',
@@ -1471,13 +1477,16 @@ export class CortexSettingTab extends PluginSettingTab {
 
       const revealBtn = actions.createEl('button', { text: 'Reveal docker-compose.cortex.yml' });
       revealBtn.addEventListener('click', () => {
-        if (fullYmlPath) {
-          const appWithReveal = this.plugin.app as unknown as { showInFolder?(p: string): void };
-          if (typeof appWithReveal.showInFolder === 'function') {
-            appWithReveal.showInFolder(fullYmlPath);
-          } else {
-            new Notice(`docker-compose.cortex.yml lives at: ${fullYmlPath}`);
-          }
+        // Obsidian's undocumented app.showInFolder() expects a vault-relative
+        // path — it prepends the vault root itself. Passing the absolute path
+        // from getFullPath() produced `<vault>/<vault>/<file>` and a
+        // "does not exist" Notice. Send the relative path; keep fullYmlPath
+        // around purely for the textual fallback below.
+        const appWithReveal = this.plugin.app as unknown as { showInFolder?(p: string): void };
+        if (typeof appWithReveal.showInFolder === 'function') {
+          appWithReveal.showInFolder(ymlPath);
+        } else if (fullYmlPath) {
+          new Notice(`docker-compose.cortex.yml lives at: ${fullYmlPath}`);
         }
       });
     } else {
@@ -2324,7 +2333,7 @@ export class CortexSettingTab extends PluginSettingTab {
 
     new Setting(parent)
       .setName('Enable local mcp server')
-      .setDesc('Required for the connect buttons above. Binds to 127.0.0.1 only.')
+      .setDesc('Required for the connect buttons above. On by default — binds to 127.0.0.1 only and requires a bearer token.')
       .addToggle(t => t
         .setValue(this.plugin.settings.mcpEnabled)
         .onChange(async v => {

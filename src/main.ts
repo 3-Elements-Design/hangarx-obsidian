@@ -358,7 +358,15 @@ export default class CortexPlugin extends Plugin {
       } else if (pane === 'related') {
         void this.activateRelatedView();
       }
-      if (this.settings.mcpEnabled && this.settings.apiKey && this.settings.workspaceId) {
+      // Auto-start the MCP server when it's enabled and the user is set up
+      // to talk to a Cortex backend. Local mode runs the API with
+      // LOCAL_AUTH_DISABLED=true and tolerates any apiKey (including ''), so
+      // require apiKey only in cloud mode — otherwise a fresh local install
+      // would see "Enable local mcp server: ON" in settings but no server
+      // running because they hadn't pasted an apiKey they don't need.
+      const cortexReady = !!this.settings.workspaceId
+        && (this.settings.connectionMode === 'local' || !!this.settings.apiKey);
+      if (this.settings.mcpEnabled && cortexReady) {
         window.setTimeout(() => { void this.toggleMcpServer(true); }, 1500);
       }
 
