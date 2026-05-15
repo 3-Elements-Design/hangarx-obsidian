@@ -362,6 +362,15 @@ export default class CortexPlugin extends Plugin {
         window.setTimeout(() => { void this.toggleMcpServer(true); }, 1500);
       }
 
+      // Post-update guidance for local-mode users. A plugin update only
+      // swaps main.js/manifest.json/styles.css; it does NOT touch the
+      // user's saved docker-compose.cortex.yml or the running container.
+      // We pin the cortex-api Docker tag in the wizard template per
+      // release, so users on a previous version are running the stale
+      // image until they re-save the YAML and re-up the stack. Surface a
+      // one-time notice pointing them at the wizard.
+      void this.maybeShowUpgradeNotice();
+
       // First-run onboarding: open the persistent side-panel checklist.
       // Skip the auto-open if the user already looks fully set up — re-
       // installing into an existing vault shouldn't re-greet them.
@@ -424,6 +433,61 @@ export default class CortexPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     if (this.client) this.client = new CortexClient(this.settings);
+  }
+
+  /**
+   * Detect plugin upgrades and prompt local-mode users to re-save the
+   * wizard's docker-compose.cortex.yml so the freshly-pinned cortex-api
+   * tag actually gets pulled. The notice fires when:
+   *   - the user is in local mode (cloud users have nothing to pull),
+   *   - a docker-compose.cortex.yml already exists in the vault (no
+   *     point nudging users who haven't set up the local stack at all),
+   *   - and either the stored version differs from manifest.version, OR
+   *     the field is empty but onboardingShownAt is set (existing
+   *     installs predating this field — they only get nudged once).
+   * Updates lastSeenPluginVersion unconditionally so the notice only
+   * fires once per upgrade.
+   */
+  private async maybeShowUpgradeNotice(): Promise<void> {
+    const currentVersion = this.manifest.version;
+    const lastSeen = this.settings.lastSeenPluginVersion;
+    const upgraded = !!lastSeen && lastSeen !== currentVersion;
+    const probablyExisting = !lastSeen && !!this.settings.onboardingShownAt;
+
+    if ((upgraded || probablyExisting) && this.settings.connectionMode === 'local') {
+      const ymlPath = 'docker-compose.cortex.yml';
+      const ymlExists = await this.app.vault.adapter.exists(ymlPath).catch(() => false);
+      if (ymlExists) {
+        const frag = createFragment();
+        const header = createEl('strong', { text: `HangarX updated to v${currentVersion}` });
+        frag.appendChild(header);
+        frag.appendChild(createEl('br'));
+        frag.appendChild(createEl('span', {
+          text: 'Re-save docker-compose.cortex.yml from the setup wizard, then run `docker compose up -d --force-recreate` so the new cortex-api image gets pulled.',
+        }));
+        frag.appendChild(createEl('br'));
+        const btn = createEl('button', { text: 'Open setup', cls: 'mod-cta' });
+        btn.style.marginTop = '8px';
+        btn.addEventListener('click', () => {
+          const settingApi = (this.app as unknown as {
+            setting?: { open?: () => void; openTabById?: (id: string) => void };
+          }).setting;
+          settingApi?.open?.();
+          settingApi?.openTabById?.(this.manifest.id);
+          notice.hide();
+        });
+        frag.appendChild(btn);
+        // Duration 0 → sticky; the user must click the button or the
+        // notice's own dismiss control. We don't want this auto-fading
+        // because the action is required to actually get the new image.
+        const notice = new Notice(frag, 0);
+      }
+    }
+
+    if (lastSeen !== currentVersion) {
+      this.settings.lastSeenPluginVersion = currentVersion;
+      await this.saveSettings();
+    }
   }
 
   /**

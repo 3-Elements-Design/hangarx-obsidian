@@ -182,7 +182,14 @@ export class ChatPanel {
   // Smart "ask the current note" — when on, prepends the active editor's
   // file as context to the next prompt. Toggled via a chip above the
   // composer; auto-updates as the user navigates between notes.
-  private askAboutActiveFile = false;
+  // Defaults to ON: when a markdown file is active, auto-attach it as context
+  // for the next message. Users open chat with a note focused usually because
+  // they want to ask about that note — making them click an inert "Use as
+  // context" chip first was a common point of confusion. They can still click
+  // the chip to turn it off; that off-state then sticks for the rest of the
+  // current chat (including across file switches). resetConversation() flips
+  // it back to true so a fresh chat starts attaching the active note again.
+  private askAboutActiveFile = true;
   private activeFileChipEl: HTMLElement | null = null;
   private activeFileWatcher: { unload: () => void } | null = null;
 
@@ -348,7 +355,9 @@ export class ChatPanel {
     const file = this.app.workspace.getActiveFile();
     if (!file || file.extension !== 'md') {
       this.activeFileChipEl.addClass('is-hidden');
-      this.askAboutActiveFile = false;
+      // Preserve the on/off preference across non-markdown surfaces (canvas,
+      // image preview, etc.). buildActiveFileContext() guards against
+      // non-markdown files independently, so it's safe to leave the flag set.
       return;
     }
     this.activeFileChipEl.removeClass('is-hidden');
@@ -486,6 +495,10 @@ export class ChatPanel {
     this.askBtn.setAttr('disabled', 'true');
     this.exportBtn.addClass('is-hidden');
     this.closeHistoryPopover();
+    // New chat → re-attach the active note by default. The OFF state is only
+    // sticky within a single conversation.
+    this.askAboutActiveFile = true;
+    this.refreshActiveFileChip();
     this.inputEl.focus();
   }
 

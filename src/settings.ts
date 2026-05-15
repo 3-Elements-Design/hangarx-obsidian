@@ -370,6 +370,13 @@ export interface CortexSettings {
   // Internal device ID — auto-generated on first run; not exposed.
   deviceId: string;
   deviceName: string;
+
+  /** Plugin version recorded at the end of the last successful onload.
+   *  Used to detect upgrades and surface a one-time post-update notice
+   *  for local-mode users (so they re-save docker-compose.cortex.yml and
+   *  pull the freshly-pinned cortex-api image). Empty on installs that
+   *  predate the field. */
+  lastSeenPluginVersion: string;
 }
 
 export const DEFAULT_SETTINGS: CortexSettings = {
@@ -409,6 +416,7 @@ export const DEFAULT_SETTINGS: CortexSettings = {
   embeddingPreset: 'gemini',
   deviceId: '',
   deviceName: '',
+  lastSeenPluginVersion: '',
 };
 
 export function defaultDeviceName(): string {
