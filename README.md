@@ -175,7 +175,59 @@ Settings → **Agents** shows every supported harness:
 
 Click **Connect** and HangarX merges its MCP server entry into the agent's config (non-destructively — your other MCP servers stay). Restart the agent and it gets the tools below.
 
-> The same tool set is available to the in-Obsidian chat agent and to every MCP-compatible client. Tool names match what you'll see in your AI tool's debug panel.
+> **Two MCP surfaces:** the **plugin bridge** (loopback HTTP at `127.0.0.1:7474`, behind a bearer token) is what the one-click connect wires up — a focused toolset tuned for vault-side workflows including a handful of tools (sync, dedupe, active-note) that only work with direct vault access. The **Cortex API** also speaks MCP and exposes a larger surface (50+ tools — workflows, custom tools, advanced search variants, live event streams) for agents that connect to it directly. Most users only need the plugin bridge.
+
+### Plugin bridge tools (what one-click agents see)
+
+These are what Claude Desktop / Cursor / Cline / etc. see in their tool listings after you click Connect.
+
+#### Ask + retrieve
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_ask` | Synthesized Q&A grounded in your vault — multi-hop retrieval + citations |
+| `cortex_recall` | Search both agent memories AND the vault graph; results tagged by source so the agent can distinguish |
+| `cortex_search_entities` | Find entities by name + optional type (Person, Project, Concept, …) |
+| `cortex_stats` | Graph totals + per-type entity / relationship breakdowns |
+
+#### Workspace awareness (plugin-only — needs vault access)
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_active_note` | Path, content, and frontmatter of the markdown file open right now — "tell me about this note" without naming it |
+| `cortex_recent_notes` | Most-recently-modified notes — temporal context for "what have you been working on?" |
+| `cortex_get_note` | Full content + outgoing links + backlinks for one note by vault path |
+
+#### Graph exploration
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_related` | Notes related to a given note via wikilinks, embeddings, or extracted entities |
+| `cortex_paths` | Shortest paths between two entities — multi-hop graph reasoning |
+| `cortex_suggest_links` | Wikilink suggestions driven by entity matching |
+| `cortex_contradictions` | Surface inconsistencies across notes |
+
+#### Memory + writes
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_remember` | Persist a fact / decision / insight. Auto-merges caller frontmatter (aliases, tags, links) into the file and ingests the result into the graph so it's immediately retrievable. |
+| `cortex_delete_note` | Soft-delete a note (OS trash by default; `permanent: true` opt-in). Cascades cleanup through graph + sync index. |
+| `cortex_ingest_url` | Scrape a URL and add it to the graph as a new document |
+
+#### Sync + recovery (plugin-only — needs vault access)
+
+| Tool | What the agent can do |
+|---|---|
+| `cortex_sync` | Full or path-scoped vault sync. `force: true` bypasses the per-file hash check — use after a graph reset. Surfaces `serverGraphEmpty: true` + a recovery hint when the local index thinks everything's synced but the server graph is empty. |
+| `cortex_sync_status` | Pending changes, last-sync time, drift detection — diagnose before you trigger sync |
+| `cortex_rebuild` | Async embedding backfill + community detection. Returns a `jobId` immediately; the work runs in background so MCP request timeouts don't matter. |
+| `cortex_rebuild_status` | Poll a `cortex_rebuild` job by `jobId` |
+| `cortex_dedupe` | Merge duplicate Entity nodes by (workspace, type, name). `dryRun: true` previews the merge plan without mutating. Requires cortex-api 1.0.2+. |
+
+### Cortex API direct connection (advanced)
+
+Agents that bypass the plugin bridge and connect straight to the Cortex API (`cortex.hangarx.ai` for Cloud, `127.0.0.1:3400` for Local) see a larger surface — workflows, custom tools, advanced search variants, live event streams, generative tools. The plugin-only tools above (sync, active-note, etc.) are *not* available on this surface because the Cortex API can't reach into your vault; everything else listed below is.
 
 #### Q&A and unified retrieval
 
@@ -285,7 +337,22 @@ Right-sidebar chat. Multi-hop retrieval with citations. Click an entity chip to 
 - **Suggested starters** — Catch me up · Trace connections · Surface decisions · Find blind spots
 - **Auto-highlight on graph** — toggle the pin on any answer to make every future answer auto-push its cited entities into the Graph view filter
 - **Save as note** — drop the answer into `Cortex Chats/`
-- **Conversation history** — sessions persist across restarts
+- **Conversation history** — sessions persist across restarts and feed back into the next turn, so multi-turn replies like "yes" / "expand on that" resolve correctly
+
+#### Slash commands
+
+The chat agent runs server-side and can't reach plugin-local primitives like vault sync. Slash commands bypass the agent and call the plugin directly:
+
+| Command | What it does |
+|---|---|
+| `/sync` | Incremental vault sync — live progress card with per-file ETA + Cancel button |
+| `/sync force` | Wipe the local sync index and re-ingest every file (graph-reset recovery) |
+| `/sync-status` | Pending changes, last-sync timestamp, drift detection |
+| `/rebuild` | Backfill embeddings + re-detect graph communities — used after a fastMode sync or an interrupted ingest |
+| `/dedupe` | Merge duplicate Entity nodes; add `dry` to preview the plan |
+| `/help` | List the above |
+
+Natural-language imperatives like _"sync the vault"_, _"force resync"_, _"rebuild the graph"_, _"check sync status"_ are routed through the same handlers via a deliberately narrow intent detector — questions ("how does sync work?") still go to the agent.
 
 ### Sync modal
 
