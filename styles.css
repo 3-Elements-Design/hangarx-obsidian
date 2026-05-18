@@ -453,6 +453,128 @@
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
+
+/* Live progress card for /sync (and staged variant for /rebuild). Lives
+   inside the AI bubble, replaces the "Running /sync…" pill, gets
+   per-file updates throttled to ~10/sec. */
+.cortex-chat-sync-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  margin: 4px 0;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-normal);
+}
+.cortex-chat-sync-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cortex-chat-sync-progress-phase {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cortex-chat-sync-progress-cancel {
+  font-size: 11px;
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.cortex-chat-sync-progress-cancel:hover:not([disabled]) {
+  color: var(--text-error, var(--text-normal));
+  border-color: var(--text-error, var(--interactive-accent));
+}
+.cortex-chat-sync-progress-cancel[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cortex-chat-sync-progress-path {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 14px;
+}
+.cortex-chat-sync-progress-bar {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.cortex-chat-sync-progress-bar::-webkit-progress-bar {
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+}
+.cortex-chat-sync-progress-bar::-webkit-progress-value {
+  background: var(--interactive-accent);
+  border-radius: 3px;
+  transition: width 120ms linear;
+}
+.cortex-chat-sync-progress-bar::-moz-progress-bar {
+  background: var(--interactive-accent);
+  border-radius: 3px;
+}
+.cortex-chat-sync-progress-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Staged variant — checklist of named steps that flip from circle →
+   spinner → check as each one starts/finishes. Used by /rebuild. */
+.cortex-chat-sync-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+.cortex-chat-sync-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cortex-chat-sync-stage.is-running {
+  color: var(--text-normal);
+}
+.cortex-chat-sync-stage.is-done {
+  color: var(--text-normal);
+  opacity: 0.85;
+}
+.cortex-chat-sync-stage-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.cortex-chat-sync-stage-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+.cortex-chat-sync-stage.is-running .cortex-chat-sync-stage-icon .svg-icon {
+  animation: cortex-chat-spin 1.2s linear infinite;
+  color: var(--interactive-accent);
+}
+.cortex-chat-sync-stage.is-done .cortex-chat-sync-stage-icon .svg-icon {
+  color: var(--color-green, #4ade80);
+}
+@keyframes cortex-chat-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 .cortex-chat-suggestions-secondary {
   /* Slightly muted styling so the secondary tier reads as background */
   opacity: 0.92;

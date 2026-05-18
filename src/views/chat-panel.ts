@@ -1206,18 +1206,37 @@ export class ChatPanel {
           return true;
         }
         const force = args.includes('force');
-        const result = await this.plugin.sync.fullSync({ force });
-        await renderResult(
-          [
-            `✅ **Sync complete** (${force ? 'force-resync' : 'incremental'})`,
-            '',
-            `- **${result.synced}** synced`,
-            `- **${result.unchanged}** unchanged`,
-            `- **${result.skipped}** skipped (no body / not eligible)`,
-            `- **${result.deleted}** removed`,
-            ...(result.failed && result.failed > 0 ? [`- **${result.failed}** failed (see console)`] : []),
-          ].join('\n'),
-        );
+        // Replace the static "Running /sync…" pill with a structured
+        // progress card that updates per-file. Without this users see no
+        // feedback for the duration of the sync — multi-minute on big
+        // vaults — and assume the plugin is hung.
+        thinkingEl.remove();
+        const progress = this.mountSyncProgressCard(bodyEl, force);
+        try {
+          const result = await this.plugin.sync.fullSync({
+            force,
+            onProgress: progress.update,
+            signal: progress.signal,
+          });
+          progress.dispose();
+          const headline = result.paused === 'cancelled'
+            ? `⏹ **Sync cancelled** — partial: ${result.synced} synced, ${result.unchanged} unchanged, ${result.deleted} removed`
+            : `✅ **Sync complete** (${force ? 'force-resync' : 'incremental'})`;
+          await renderResult(
+            [
+              headline,
+              '',
+              `- **${result.synced}** synced`,
+              `- **${result.unchanged}** unchanged`,
+              `- **${result.skipped}** skipped (no body / not eligible)`,
+              `- **${result.deleted}** removed`,
+              ...(result.failed && result.failed > 0 ? [`- **${result.failed}** failed (see console)`] : []),
+            ].join('\n'),
+          );
+        } catch (e) {
+          progress.dispose();
+          throw e;
+        }
         return true;
       }
 
@@ -1249,20 +1268,34 @@ export class ChatPanel {
 
       if (cmd === 'rebuild') {
         // backfillEntityEmbeddings + detectCommunities run sequentially on the
-        // server; on big graphs this can take minutes. Show progress hints
-        // so the user knows we haven't hung.
-        thinkingEl.setText('Backfilling embeddings…');
-        await this.client.backfillEntityEmbeddings();
-        thinkingEl.setText('Detecting communities…');
-        const detect = await this.client.detectCommunities();
-        await renderResult(
-          [
-            '✅ **Rebuild complete**',
-            '',
-            `- Embeddings backfilled`,
-            `- ${detect.communitiesCreated} communities across ${detect.levels} levels (modularity ${detect.modularity?.toFixed(3) ?? 'n/a'})`,
-          ].join('\n'),
-        );
+        // server; on big graphs each phase can take minutes. We have no
+        // file-level progress for these endpoints — only phase boundaries —
+        // so a simple step indicator + elapsed timer beats a frozen pill.
+        thinkingEl.remove();
+        const stages = this.mountStagedProgressCard(bodyEl, [
+          'Backfill entity embeddings',
+          'Detect graph communities',
+        ]);
+        try {
+          stages.start(0);
+          await this.client.backfillEntityEmbeddings();
+          stages.finish(0);
+          stages.start(1);
+          const detect = await this.client.detectCommunities();
+          stages.finish(1);
+          stages.dispose();
+          await renderResult(
+            [
+              '✅ **Rebuild complete**',
+              '',
+              `- Embeddings backfilled`,
+              `- ${detect.communitiesCreated} communities across ${detect.levels} levels (modularity ${detect.modularity?.toFixed(3) ?? 'n/a'})`,
+            ].join('\n'),
+          );
+        } catch (e) {
+          stages.dispose();
+          throw e;
+        }
         return true;
       }
 
@@ -1296,6 +1329,147 @@ export class ChatPanel {
     }
 
     return false;
+  }
+
+  /**
+   * Mount a live-updating progress card for /sync inside the AI bubble.
+   * Returns:
+   *  - update(): per-file progress callback the caller passes to
+   *    plugin.sync.fullSync({ onProgress })
+   *  - signal: AbortSignal wired to the in-card Cancel button — pass to
+   *    fullSync({ signal }) so cancel actually stops the sync
+   *  - dispose(): remove the card when sync completes (caller renders a
+   *    summary message afterwards)
+   *
+   * DOM updates are throttled to ~10/sec — mirror of makeProgressNotice's
+   * throttle, prevents DOM thrash from killing sync throughput on big
+   * vaults. ETA is a naive elapsed/done * remaining; close enough at the
+   * minute scale users care about, and quickly stabilises after the first
+   * dozen files complete.
+   */
+  private mountSyncProgressCard(parent: HTMLElement, force: boolean): {
+    update: (p: { phase: 'sync' | 'delete'; done: number; total: number; currentPath?: string }) => void;
+    signal: AbortSignal;
+    dispose: () => void;
+  } {
+    const card = parent.createDiv({ cls: 'cortex-chat-sync-progress' });
+    const headerEl = card.createDiv({ cls: 'cortex-chat-sync-progress-header' });
+    const phaseEl = headerEl.createSpan({ cls: 'cortex-chat-sync-progress-phase' });
+    phaseEl.setText(force ? 'Force-resyncing…' : 'Starting sync…');
+    const cancelBtn = headerEl.createEl('button', {
+      cls: 'cortex-chat-sync-progress-cancel',
+      text: 'Cancel',
+      attr: { type: 'button' },
+    });
+
+    const pathEl = card.createDiv({ cls: 'cortex-chat-sync-progress-path', text: '' });
+
+    const bar = card.createEl('progress', { cls: 'cortex-chat-sync-progress-bar' });
+    bar.max = 100;
+    bar.value = 0;
+
+    const metaEl = card.createDiv({ cls: 'cortex-chat-sync-progress-meta', text: 'Starting…' });
+
+    const abortController = new AbortController();
+    cancelBtn.addEventListener('click', () => {
+      cancelBtn.setText('Cancelling…');
+      cancelBtn.setAttr('disabled', 'true');
+      abortController.abort();
+    });
+
+    const startTime = Date.now();
+    let lastTick = 0;
+    // Refresh the elapsed timer even when no progress events fire (e.g.
+    // first file is still being LLM-extracted server-side). Without this
+    // the meta line would stay frozen at "Starting…" for the first
+    // ~30 seconds of any sync.
+    const tickInterval = window.setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      if (bar.value === 0 || bar.value === bar.max) {
+        metaEl.setText(`${formatToolDuration(elapsed)} elapsed`);
+      }
+    }, 1000);
+
+    return {
+      update: ({ phase, done, total, currentPath }) => {
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        bar.max = total || 1;
+        bar.value = done;
+        const now = Date.now();
+        if (now - lastTick < 100 && done < total) return;
+        lastTick = now;
+        const verb = phase === 'sync' ? (force ? 'Force-syncing' : 'Syncing') : 'Removing';
+        phaseEl.setText(`${verb} ${done} / ${total} (${pct}%)`);
+        pathEl.setText(currentPath ? currentPath.split('/').pop() ?? currentPath : '');
+        const elapsed = now - startTime;
+        if (done > 0 && done < total) {
+          const etaMs = (elapsed / done) * (total - done);
+          metaEl.setText(`${formatToolDuration(elapsed)} elapsed · ~${formatToolDuration(etaMs)} remaining`);
+        } else {
+          metaEl.setText(`${formatToolDuration(elapsed)} elapsed`);
+        }
+      },
+      signal: abortController.signal,
+      dispose: () => {
+        window.clearInterval(tickInterval);
+        card.remove();
+      },
+    };
+  }
+
+  /**
+   * Mount a stage-based progress card for multi-step operations that
+   * don't expose per-item progress (e.g. /rebuild's two server calls,
+   * /dedupe's single Cypher pass). Shows each stage as a checklist that
+   * fills in as it completes, plus an elapsed-time chip. Cheaper UX than
+   * a no-op spinner without misleading file-level granularity.
+   */
+  private mountStagedProgressCard(parent: HTMLElement, stages: string[]): {
+    start: (idx: number) => void;
+    finish: (idx: number) => void;
+    dispose: () => void;
+  } {
+    const card = parent.createDiv({ cls: 'cortex-chat-sync-progress' });
+    const headerEl = card.createDiv({ cls: 'cortex-chat-sync-progress-header' });
+    const phaseEl = headerEl.createSpan({ cls: 'cortex-chat-sync-progress-phase', text: 'Running…' });
+
+    const list = card.createDiv({ cls: 'cortex-chat-sync-stage-list' });
+    const stageEls: { row: HTMLElement; icon: HTMLElement; label: HTMLElement }[] = stages.map((name) => {
+      const row = list.createDiv({ cls: 'cortex-chat-sync-stage' });
+      const icon = row.createSpan({ cls: 'cortex-chat-sync-stage-icon' });
+      setIcon(icon, 'circle');
+      const label = row.createSpan({ cls: 'cortex-chat-sync-stage-label', text: name });
+      return { row, icon, label };
+    });
+
+    const metaEl = card.createDiv({ cls: 'cortex-chat-sync-progress-meta', text: '0s elapsed' });
+    const startTime = Date.now();
+    const tickInterval = window.setInterval(() => {
+      metaEl.setText(`${formatToolDuration(Date.now() - startTime)} elapsed`);
+    }, 1000);
+
+    return {
+      start: (idx: number) => {
+        const s = stageEls[idx];
+        if (!s) return;
+        s.row.addClass('is-running');
+        s.icon.empty();
+        setIcon(s.icon, 'loader-2');
+        phaseEl.setText(stages[idx]);
+      },
+      finish: (idx: number) => {
+        const s = stageEls[idx];
+        if (!s) return;
+        s.row.removeClass('is-running');
+        s.row.addClass('is-done');
+        s.icon.empty();
+        setIcon(s.icon, 'check-circle-2');
+      },
+      dispose: () => {
+        window.clearInterval(tickInterval);
+        card.remove();
+      },
+    };
   }
 
   private async renderResponse(parent: HTMLElement, res: AskResponse): Promise<void> {
