@@ -56,7 +56,7 @@ services:
     # Version is bumped automatically by scripts/release-obsidian-plugin.sh from
     # packages/cortex-api/package.json. Override with CORTEX_IMAGE env var.
     # keep-in-sync: apps/hangarx-obsidian/src/settings.ts (CORTEX_API_VERSION)
-    image: ${CORTEX_IMAGE:-hangarx/cortex-api:1.0.1}
+    image: ${CORTEX_IMAGE:-hangarx/cortex-api:1.0.3}
     container_name: cortex-api
     restart: unless-stopped
     ports:

@@ -37,7 +37,7 @@ const LOCAL_API_URL = 'http://localhost:3400';
 // so every plugin release ships against a known-good server image instead of a
 // drifting :latest. The CORTEX_IMAGE env var still overrides for power users.
 // keep-in-sync: docker-compose.local.yml, scripts/release-obsidian-plugin.sh
-export const CORTEX_API_VERSION = '1.0.1';
+export const CORTEX_API_VERSION = '1.0.3';
 
 export type EmbeddingPreset = 'gemini' | 'ollama';
 
