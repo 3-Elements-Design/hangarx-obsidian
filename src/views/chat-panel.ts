@@ -1022,7 +1022,19 @@ export class ChatPanel {
           setPhase(phrases[pIdx]);
         }, 1600);
         try {
-          res = await this.client.ask(prefix + promptText, this.sessionId);
+          // Pass prior turns so the fast path (which lands here instead of
+          // askStream) can still resolve multi-turn replies like "yes" /
+          // "expand on that". Same shape as the streaming branch above.
+          res = await this.client.ask(prefix + promptText, {
+            sessionId: this.sessionId,
+            history: this.currentTurns
+              .slice(0, -1)
+              .slice(-20)
+              .map((t) => ({
+                role: t.role === 'user' ? ('user' as const) : ('assistant' as const),
+                content: t.content,
+              })),
+          });
         } finally {
           window.clearInterval(ticker);
         }

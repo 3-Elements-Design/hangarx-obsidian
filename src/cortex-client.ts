@@ -924,7 +924,17 @@ export class CortexClient {
     return res.data;
   }
 
-  async ask(query: string, _sessionId?: string): Promise<AskResponse> {
+  async ask(
+    query: string,
+    opts?: {
+      sessionId?: string;
+      /** Prior conversation turns, oldest first. The server feeds them into
+       *  the agent harness so multi-turn replies like "yes" / "and what
+       *  about X?" remember the prior question and answer. Symmetric with
+       *  askStream's `history` option — keep them in sync. */
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    },
+  ): Promise<AskResponse> {
     // /chat/answer returns an LLM-synthesized response. expanded:true also
     // includes the structured `raw` context (entities, documents) and
     // suggestedFollowUps used to render the rich UI. sessionId is currently
@@ -982,6 +992,7 @@ export class CortexClient {
         workspaceId: effectiveWorkspaceId(this.settings),
         expanded: !agentMode, // expanded mode is only meaningful for the legacy RAG path
         ...(enabledTools ? { enabledTools } : {}),
+        ...(opts?.history && opts.history.length > 0 ? { history: opts.history } : {}),
       }),
     });
 
