@@ -408,6 +408,51 @@
   display: inline-flex;
   align-items: center;
 }
+
+/* Slash-command discovery line in the empty state. Reads as a quiet
+   footer hint, not another suggestion card — visually subordinated so
+   it doesn't compete with the daily-ritual prompts. */
+.cortex-chat-empty-slash-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 16px auto 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-radius: 6px;
+  background: var(--background-primary-alt);
+  border: 1px dashed var(--background-modifier-border);
+  max-width: 560px;
+  width: fit-content;
+}
+.cortex-chat-empty-slash-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+}
+.cortex-chat-empty-slash-icon .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+.cortex-chat-empty-slash-text {
+  display: inline;
+}
+.cortex-chat-empty-slash-cta {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+.cortex-chat-empty-slash-cta:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
 .cortex-chat-suggestions-secondary {
   /* Slightly muted styling so the secondary tier reads as background */
   opacity: 0.92;

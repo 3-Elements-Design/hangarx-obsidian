@@ -449,6 +449,24 @@ export class ChatPanel {
         new m.StartersModal(this.app, (text) => this.populateInput(text)).open();
       });
     });
+
+    // Slash-command hint. The chat agent runs server-side and can't reach
+    // plugin-local primitives like vault sync, embedding rebuild, or
+    // entity dedup. Slash commands bypass the agent for those cases and
+    // are the reliable escape hatch. Surface /help here so users discover
+    // them organically without needing to read the README.
+    const slashHint = empty.createDiv({ cls: 'cortex-chat-empty-slash-hint' });
+    const slashIcon = slashHint.createSpan({ cls: 'cortex-chat-empty-slash-icon' });
+    setIcon(slashIcon, 'terminal');
+    const slashText = slashHint.createSpan({ cls: 'cortex-chat-empty-slash-text' });
+    slashText.createSpan({ text: 'Tip: type ' });
+    const helpBtn = slashText.createEl('button', {
+      cls: 'cortex-chat-empty-slash-cta',
+      text: '/help',
+      attr: { type: 'button' },
+    });
+    helpBtn.addEventListener('click', () => this.populateInput('/help'));
+    slashText.createSpan({ text: ' for vault commands (sync, rebuild, dedupe).' });
   }
 
   private renderSuggestionCards(
@@ -783,6 +801,19 @@ export class ChatPanel {
     // through to the agent so it can respond normally.
     if (query.startsWith('/')) {
       const handled = await this.maybeHandleSlashCommand(query);
+      if (handled) return;
+    }
+
+    // Natural-language intent detector for the same set of commands.
+    // Translates phrasings like "sync the vault" / "force resync" /
+    // "rebuild the graph" / "dedupe the entities" into the equivalent
+    // slash form and routes through maybeHandleSlashCommand. Skips
+    // questions ("how does sync work?") and past-tense / casual mentions.
+    // Lower-confidence than the slash form by design — when this misses
+    // a phrasing the agent loop still runs as a fallback.
+    const intent = detectSyncIntent(query);
+    if (intent) {
+      const handled = await this.maybeHandleSlashCommand(intent);
       if (handled) return;
     }
 
@@ -2929,4 +2960,66 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * Natural-language intent detector for the slash-command set. Returns the
+ * equivalent slash form (so it can be routed straight to
+ * maybeHandleSlashCommand) when the input is an *imperative* sync /
+ * rebuild / dedupe / status request, or null if the input doesn't match
+ * or is a question / casual mention.
+ *
+ * The slash form is always preferred — this is a convenience layer for
+ * users who don't know about slashes yet. When in doubt, return null and
+ * let the agent loop handle the query: a false negative (missed intent
+ * → agent answers normally) is less surprising than a false positive
+ * (asked a question → got an unexpected sync). The detector is
+ * deliberately narrow.
+ *
+ * Recognises:
+ *   - "sync" / "sync the vault" / "sync my notes" / "sync to fill gaps" → /sync
+ *   - "force sync" / "force resync" / "do a force sync"             → /sync force
+ *   - "run sync" / "trigger a sync" / "kick off the sync"           → /sync
+ *   - "sync status" / "check sync status" / "what's the sync state" → /sync-status
+ *   - "rebuild" / "rebuild the graph" / "reindex"                   → /rebuild
+ *   - "dedupe" / "deduplicate" / "merge duplicate entities"          → /dedupe
+ *
+ * Always skips:
+ *   - Inputs containing a question mark
+ *   - Inputs starting with how/what/why/when/where/who/should/can/
+ *     could/does/do/is/are/will/would (interrogative cues)
+ */
+export function detectSyncIntent(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+
+  // Skip questions outright.
+  if (lower.includes('?')) return null;
+  if (/^(how|what|why|when|where|who|should|can|could|does|do|is|are|will|would)\b/.test(lower)) return null;
+  // Skip past-tense / introspective mentions ("I synced earlier", "my sync was slow")
+  if (/^(i|my|the|that)\s+(synced|rebuilt|deduped|was|were|had|has)\b/.test(lower)) return null;
+
+  // Status — check before sync so "sync status" wins over "sync"
+  if (/\b(sync\s*-?\s*status|sync\s+state)\b/.test(lower)) return '/sync-status';
+  if (/^(check|show|tell\s+me)\s+(the\s+)?sync\b/.test(lower)) return '/sync-status';
+
+  // Sync (with optional force qualifier)
+  const forceWords = /\b(force|hard|complete|full)\b/;
+  const syncVerb = /^(please\s+|just\s+)?(re-?)?sync\b/;
+  const runSync = /\b(run|do|trigger|start|kick\s+off|perform)\s+(a\s+)?(force\s+)?(re-?)?sync\b/;
+  if (syncVerb.test(lower) || runSync.test(lower)) {
+    return forceWords.test(lower) ? '/sync force' : '/sync';
+  }
+  if (/^force\s+(re-?)?sync\b/.test(lower)) return '/sync force';
+
+  // Rebuild / reindex
+  if (/^(please\s+|just\s+)?(rebuild|reindex)\b/.test(lower)) return '/rebuild';
+  if (/\b(run|do|trigger|start)\s+(a\s+)?(rebuild|reindex)\b/.test(lower)) return '/rebuild';
+
+  // Dedupe
+  if (/^(please\s+|just\s+)?dedup(licat)?e\b/.test(lower)) return '/dedupe';
+  if (/\b(merge|consolidate)\s+(the\s+)?(duplicate\s+)?entit/.test(lower)) return '/dedupe';
+
+  return null;
 }
