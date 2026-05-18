@@ -56,7 +56,7 @@ export class ChatView extends ItemView {
         // / inline link. Note opens in the main pane.
       },
       saveSettings: () => this.plugin.saveSettings(),
-    });
+    }, this.plugin);
     this.panel.mount();
     return Promise.resolve();
   }

@@ -1,6 +1,7 @@
 import { App, Modal, Notice, MarkdownRenderer, Component, setIcon, requestUrl } from 'obsidian';
 import type { CortexClient, AskResponse, AskEntity, AskDocument, AskCitation, AgentStreamEvent } from '../cortex-client';
 import type { CortexSettings } from '../settings';
+import type CortexPlugin from '../main';
 import {
   ConversationStore,
   ChatConversation,
@@ -199,6 +200,11 @@ export class ChatPanel {
     private store: ConversationStore,
     private settings: CortexSettings,
     host: ChatPanelHost,
+    // Plugin handle — only used by maybeHandleSlashCommand to reach
+    // plugin.sync (the vault-side sync primitives the server-side chat
+    // agent can't call back into). Optional so older host code that
+    // doesn't pass it still works (slash commands just won't run).
+    private plugin?: CortexPlugin,
   ) {
     this.host = host;
     this.sessionId = crypto.randomUUID();
@@ -768,6 +774,18 @@ export class ChatPanel {
       return;
     }
 
+    // Slash-command bypass: agents running server-side can't reach the
+    // plugin's local sync / rebuild / dedupe primitives (the server has no
+    // path back to the Obsidian process). For the cases where users want
+    // those actions from chat, intercept here and call the plugin's
+    // methods directly. Renders the result as a synthetic AI turn so the
+    // conversation flow stays uniform. Skip unknown slashes — fall
+    // through to the agent so it can respond normally.
+    if (query.startsWith('/')) {
+      const handled = await this.maybeHandleSlashCommand(query);
+      if (handled) return;
+    }
+
     const { promptText, displayText, attachmentSummary } = this.buildAugmentedQuery(query);
     this.pendingAttachments = [];
     this.renderAttachmentChips();
@@ -1091,6 +1109,162 @@ export class ChatPanel {
       if (this.inputEl.value.trim().length > 0) this.askBtn.removeAttribute('disabled');
       this.scrollToBottom();
     }
+  }
+
+  /**
+   * Slash-command interceptor for chat input. Recognised commands run
+   * plugin-local primitives (sync, rebuild, dedupe, status) instead of
+   * going to the server-side agent — which can't reach them. Renders the
+   * result as a synthetic AI turn. Returns true when a command was
+   * recognised + handled; false if the input wasn't actually a command we
+   * know (in which case the caller falls through to the agent loop).
+   */
+  private async maybeHandleSlashCommand(raw: string): Promise<boolean> {
+    const trimmed = raw.trim();
+    const tokens = trimmed.slice(1).split(/\s+/);
+    const cmd = (tokens[0] ?? '').toLowerCase();
+    const args = tokens.slice(1);
+
+    const knownCommands = new Set(['sync', 'sync-status', 'rebuild', 'dedupe', 'help', '?']);
+    if (!knownCommands.has(cmd)) return false;
+
+    // Pin the user turn + start an AI turn the same way the regular flow does,
+    // so the conversation reads naturally.
+    this.renderUserTurn(trimmed);
+    this.currentTurns.push({ role: 'user', content: trimmed });
+    const aiTurn = this.outputEl.createDiv({ cls: 'cortex-chat-turn cortex-chat-ai' });
+    const aiBubble = aiTurn.createDiv({ cls: 'cortex-chat-bubble' });
+    aiBubble.createDiv({ cls: 'cortex-chat-role', text: 'HangarX' });
+    const bodyEl = aiBubble.createDiv({ cls: 'cortex-chat-body' });
+    const thinkingEl = bodyEl.createDiv({ cls: 'cortex-chat-thinking', text: `Running /${cmd}…` });
+    this.scrollToBottom();
+
+    const renderResult = async (msg: string): Promise<void> => {
+      thinkingEl.remove();
+      const answerEl = bodyEl.createDiv({ cls: 'cortex-chat-answer' });
+      await this.safeRenderMarkdown(msg, answerEl);
+      this.currentTurns.push({ role: 'ai', content: msg });
+      this.exportBtn.removeClass('is-hidden');
+      this.refreshStarBtn();
+      void this.persistConversation();
+      this.scrollToBottom();
+    };
+
+    try {
+      if (cmd === 'help' || cmd === '?') {
+        await renderResult(
+          [
+            '**HangarX chat commands**',
+            '',
+            '- `/sync` — full vault sync (incremental; skips unchanged files)',
+            '- `/sync force` — clear local index + re-ingest every file (use after a graph reset)',
+            '- `/sync-status` — pending changes, last sync time, drift detection',
+            '- `/rebuild` — backfill embeddings + re-detect graph communities (after fastMode or interrupted sync)',
+            '- `/dedupe` — merge duplicate Entity nodes by (type, name); add `dry` to preview',
+            '- `/help` — this list',
+            '',
+            '_These bypass the chat agent and call the plugin directly. Natural-language requests like "sync the vault" still go to the agent, which doesn\'t have these tools — use the slash form for now._',
+          ].join('\n'),
+        );
+        return true;
+      }
+
+      if (cmd === 'sync') {
+        if (!this.plugin) {
+          await renderResult('Slash commands need a plugin handle, which this chat host didn\'t provide. Run **HangarX: Sync** from the command palette instead.');
+          return true;
+        }
+        const force = args.includes('force');
+        const result = await this.plugin.sync.fullSync({ force });
+        await renderResult(
+          [
+            `✅ **Sync complete** (${force ? 'force-resync' : 'incremental'})`,
+            '',
+            `- **${result.synced}** synced`,
+            `- **${result.unchanged}** unchanged`,
+            `- **${result.skipped}** skipped (no body / not eligible)`,
+            `- **${result.deleted}** removed`,
+            ...(result.failed && result.failed > 0 ? [`- **${result.failed}** failed (see console)`] : []),
+          ].join('\n'),
+        );
+        return true;
+      }
+
+      if (cmd === 'sync-status') {
+        if (!this.plugin) {
+          await renderResult('Slash commands need a plugin handle, which this chat host didn\'t provide. Open Settings → HangarX → Connection to see sync state instead.');
+          return true;
+        }
+        const status = await this.plugin.sync.getChangesSinceLastSync();
+        const lastSynced = status.lastSyncedAt
+          ? new Date(status.lastSyncedAt).toLocaleString()
+          : 'never';
+        const recommend = status.added > 0 || status.changed > 0 || status.deleted > 0;
+        await renderResult(
+          [
+            '**Vault sync status**',
+            '',
+            `- **${status.total}** markdown files in scope`,
+            `- **${status.added}** new (never indexed)`,
+            `- **${status.changed}** changed since last sync`,
+            `- **${status.deleted}** in index but missing from disk`,
+            `- Last per-file sync: ${lastSynced}`,
+            '',
+            recommend ? '_Run `/sync` to apply pending changes._' : '_All caught up._',
+          ].join('\n'),
+        );
+        return true;
+      }
+
+      if (cmd === 'rebuild') {
+        // backfillEntityEmbeddings + detectCommunities run sequentially on the
+        // server; on big graphs this can take minutes. Show progress hints
+        // so the user knows we haven't hung.
+        thinkingEl.setText('Backfilling embeddings…');
+        await this.client.backfillEntityEmbeddings();
+        thinkingEl.setText('Detecting communities…');
+        const detect = await this.client.detectCommunities();
+        await renderResult(
+          [
+            '✅ **Rebuild complete**',
+            '',
+            `- Embeddings backfilled`,
+            `- ${detect.communitiesCreated} communities across ${detect.levels} levels (modularity ${detect.modularity?.toFixed(3) ?? 'n/a'})`,
+          ].join('\n'),
+        );
+        return true;
+      }
+
+      if (cmd === 'dedupe') {
+        const dryRun = args.includes('dry') || args.includes('dry-run');
+        const result = await this.client.dedupeEntities({ dryRun });
+        const samples = result.sampleMerges.slice(0, 5).map(s =>
+          `- **${s.name}** (${s.type}): winner ${'`'}${s.winner}${'`'}, losers ${s.losers.length}`,
+        ).join('\n');
+        await renderResult(
+          [
+            dryRun ? '**Dedupe dry-run**' : '✅ **Dedupe complete**',
+            '',
+            `- **${result.groupsFound}** duplicate groups found`,
+            `- **${result.entitiesMerged}** entities merged${dryRun ? ' _(would be)_' : ''}`,
+            `- **${result.relationshipsTransferred}** relationships transferred`,
+            ...(samples ? ['', '_Sample groups:_', samples] : []),
+            ...(dryRun ? ['', '_Re-run as `/dedupe` (no `dry`) to apply._'] : []),
+          ].join('\n'),
+        );
+        return true;
+      }
+    } catch (e) {
+      thinkingEl.remove();
+      this.renderErrorCard(bodyEl, e, `/${cmd} failed`, () => {
+        this.inputEl.value = trimmed;
+        void this.submit();
+      });
+      this.scrollToBottom();
+      return true;
+    }
+
+    return false;
   }
 
   private async renderResponse(parent: HTMLElement, res: AskResponse): Promise<void> {

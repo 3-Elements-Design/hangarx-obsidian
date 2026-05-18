@@ -31,7 +31,7 @@ export class ChatModal extends Modal {
       parentEl: this.contentEl,
       onNavigate: () => this.close(),
       saveSettings: () => this.plugin.saveSettings(),
-    });
+    }, this.plugin);
     this.panel.mount();
   }
 
